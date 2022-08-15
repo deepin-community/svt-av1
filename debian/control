@@ -1,0 +1,100 @@
+Source: svt-av1
+Section: video
+Priority: optional
+Maintainer: Deepin Developer <deepin-dev@deepin.org>
+Uploaders: Deepin Packages Builder <packages@deepin.org>
+Build-Depends: debhelper-compat (= 13),
+               cmake,
+               yasm
+Standards-Version: 4.6.0
+Rules-Requires-Root: no
+Homepage: https://gitlab.com/AOMediaCodec/SVT-AV1
+#Vcs-Browser
+#Vcs-Git
+
+Package: svt-av1
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends}
+Description: Scalable Video Technology for AV1 (SVT-AV1 Encoder and Decoder)
+ The Scalable Video Technology for AV1 (SVT-AV1 Encoder and Decoder) is an
+ AV1-compliant encoder/decoder library core. The SVT-AV1 encoder development
+ is a work-in-progress targeting performance levels applicable to both VOD and
+ Live encoding / transcoding video applications. The SVT-AV1 decoder
+ implementation is targeting future codec research activities.
+
+Package: libsvtav1dec0
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${misc:Depends},
+         ${shlibs:Depends}
+Description: Scalable Video Technology for AV1 (libsvtav1dec shared library)
+ The Scalable Video Technology for AV1 (SVT-AV1 Encoder and Decoder) is an
+ AV1-compliant encoder/decoder library core. The SVT-AV1 encoder development
+ is a work-in-progress targeting performance levels applicable to both VOD and
+ Live encoding / transcoding video applications. The SVT-AV1 decoder
+ implementation is targeting future codec research activities.
+ .
+ This package provides the shared library libsvtav1dec.
+
+Package: libsvtav1dec-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libsvtav1-dev (= ${source:Version}),
+         libsvtav1dec0 (= ${binary:Version}),
+         ${misc:Depends}
+Description: Scalable Video Technology for AV1 (libsvtav1dec development files)
+ The Scalable Video Technology for AV1 (SVT-AV1 Encoder and Decoder) is an
+ AV1-compliant encoder/decoder library core. The SVT-AV1 encoder development
+ is a work-in-progress targeting performance levels applicable to both VOD and
+ Live encoding / transcoding video applications. The SVT-AV1 decoder
+ implementation is targeting future codec research activities.
+ .
+ This package provides the development files for libsvtav1dec.
+
+Package: libsvtav1enc0
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${misc:Depends},
+         ${shlibs:Depends}
+Description: Scalable Video Technology for AV1 (libsvtav1enc shared library)
+ The Scalable Video Technology for AV1 (SVT-AV1 Encoder and Decoder) is an
+ AV1-compliant encoder/decoder library core. The SVT-AV1 encoder development
+ is a work-in-progress targeting performance levels applicable to both VOD and
+ Live encoding / transcoding video applications. The SVT-AV1 decoder
+ implementation is targeting future codec research activities.
+ .
+ This package provides the shared library libsvtav1enc.
+
+Package: libsvtav1enc-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libsvtav1-dev (= ${source:Version}),
+         libsvtav1enc0 (= ${binary:Version}),
+         ${misc:Depends}
+Description: Scalable Video Technology for AV1 (libsvtav1enc development files)
+ The Scalable Video Technology for AV1 (SVT-AV1 Encoder and Decoder) is an
+ AV1-compliant encoder/decoder library core. The SVT-AV1 encoder development
+ is a work-in-progress targeting performance levels applicable to both VOD and
+ Live encoding / transcoding video applications. The SVT-AV1 decoder
+ implementation is targeting future codec research activities.
+ .
+ This package provides the development files for libsvtav1enc.
+
+Package: libsvtav1-dev
+Architecture: all
+Multi-Arch: foreign
+Section: libdevel
+Depends: ${misc:Depends}
+Description: Scalable Video Technology for AV1 (header files)
+ The Scalable Video Technology for AV1 (SVT-AV1 Encoder and Decoder) is an
+ AV1-compliant encoder/decoder library core. The SVT-AV1 encoder development
+ is a work-in-progress targeting performance levels applicable to both VOD and
+ Live encoding / transcoding video applications. The SVT-AV1 decoder
+ implementation is targeting future codec research activities.
+ .
+ This package provides the development files for libsvtav1dec and libsvtav1enc.

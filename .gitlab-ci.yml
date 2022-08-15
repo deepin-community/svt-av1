@@ -1,0 +1,69 @@
+workflow:
+  rules:
+    # Use merge-request pipelines
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"
+      when: never
+    - when: always
+
+stages:
+  - compile
+  - test
+
+variables:
+  CMAKE_GENERATOR: Ninja
+  CCACHE_DIR: $CI_PROJECT_DIR/.ccache
+
+default:
+  interruptible: true
+  retry: 2
+  cache:
+    key: ${CI_JOB_NAME}
+    paths:
+      - .ccache
+    policy: pull-push
+
+include:
+  - local: /.gitlab/workflows/common/.gitlab-ci.yml
+  - local: /.gitlab/workflows/nightly/.gitlab-ci.yml
+    rules:
+      - if: $NIGHTLY != null
+  - local: /.gitlab/workflows/standard/.gitlab-ci.yml
+    rules:
+      - if: $NIGHTLY == null
+
+Style check:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $NIGHTLY == null
+  stage: compile
+  image: registry.gitlab.com/aomediacodec/aom-testing/alpine3
+  script:
+    - ./test/stylecheck.sh
+
+Static analysis (cppcheck):
+  rules:
+    - if: $NIGHTLY != null
+      when: never
+    - !reference [.source_code_rules]
+  stage: compile
+  image: registry.gitlab.com/aomediacodec/aom-testing/ubuntu1804
+  cache:
+    key: cppcheck
+    paths:
+      - .cppcheck
+    policy: pull-push
+  script:
+    - cmake -B Build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    - mkdir -p .cppcheck
+    - jq '.[]|=with_entries(select(.value | test(".asm|/SVT-AV1/Build/cpuinfo") | not)) | unique' Build/compile_commands.json > compile_commands.json
+    - |
+      cppcheck \
+        --project=compile_commands.json \
+        --error-exitcode=1 \
+        --enable=all \
+        -j 2 \
+        -rp=$PWD \
+        -ithird_party \
+        --cppcheck-build-dir=.cppcheck \
+        --suppress=unusedFunction > /dev/null
