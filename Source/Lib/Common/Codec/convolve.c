@@ -117,7 +117,14 @@ void svt_av1_wiener_convolve_add_src_c(const uint8_t *const src, const ptrdiff_t
 
     uint16_t      temp[WIENER_MAX_EXT_SIZE * MAX_SB_SIZE];
     const int32_t intermediate_height = (((h - 1) * y_step_q4 + y0_q4) >> SUBPEL_BITS) +
-        SUBPEL_TAPS;
+        SUBPEL_TAPS - 1;
+
+    // The last row is set to 0 to address an uninitialized memory access when
+    // using the "C" code path.  In vert_scalar_product, where the wiener filter is applied to the pixels,
+    // the bottom-edge pixels will need 3 padded pixels to perform a 7-tap filter. However, the filter is applied
+    // over 8 (SUBPEL_TAPS) pixels, with the final 8th weight being zero. Therefore, the extra bottom-most pixel
+    // will not affect the result, but will cause a sanitizer failure if not initialized.
+    memset(temp + (intermediate_height * MAX_SB_SIZE), 0, MAX_SB_SIZE);
 
     assert(w <= MAX_SB_SIZE);
     assert(h <= MAX_SB_SIZE);

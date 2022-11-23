@@ -24,7 +24,7 @@ void read_and_skip_y4m_header(FILE *input_file) {
 }
 
 /* reads the y4m header and parses the input parameters */
-int32_t read_y4m_header(EbConfig *cfg) {
+EbErrorType read_y4m_header(EbConfig *cfg) {
 #define CHROMA_MAX 4
     char          buffer[YFM_HEADER_MAX];
     char         *tokstart = buffer;
@@ -205,7 +205,6 @@ int32_t read_y4m_header(EbConfig *cfg) {
     cfg->config.source_height          = height;
     cfg->config.frame_rate_numerator   = fr_n;
     cfg->config.frame_rate_denominator = fr_d;
-    cfg->config.frame_rate             = fr_n / fr_d;
     cfg->config.encoder_bit_depth      = bitdepth;
     cfg->mmap.y4m_seq_hdr              = ftell(cfg->input_file);
 
@@ -226,47 +225,26 @@ int32_t read_y4m_header(EbConfig *cfg) {
 }
 
 /* read next line which contains the "FRAME" delimiter */
-void read_y4m_frame_delimiter(FILE *input_file, FILE *error_log_file) {
+size_t read_y4m_frame_delimiter(FILE *input_file, FILE *error_log_file) {
     char buffer_y4m_header[YFM_HEADER_MAX] = {0};
 
     if (!fgets(buffer_y4m_header, sizeof(buffer_y4m_header), input_file)) {
         assert(feof(input_file));
-        return;
+        return 0;
     }
     if (strncmp(buffer_y4m_header, "FRAME", sizeof("FRAME") - 1)) {
         fprintf(error_log_file, "Failed to read proper y4m frame delimeter. Read broken.\n");
-        return;
+        return 0;
     }
+    return strlen(buffer_y4m_header);
 }
-/* computes size of y4m frame header*/
-void read_and_compute_y4m_frame_delimiter(FILE *input_file, FILE *error_log_file,
-                                          uint32_t *frame_hdr) {
-    char buffer_y4m_header[YFM_HEADER_MAX] = {0};
 
-    if (!fgets(buffer_y4m_header, sizeof(buffer_y4m_header), input_file)) {
-        assert(feof(input_file));
-        return;
-    }
-    if (strncmp(buffer_y4m_header, "FRAME", sizeof("FRAME") - 1)) {
-        fprintf(error_log_file, "Failed to read proper y4m frame delimeter. Read broken.\n");
-        return;
-    }
-
-    int i = 0;
-    while (i < YFM_HEADER_MAX && buffer_y4m_header[i] != '\n') i++;
-
-    *frame_hdr = i + 1;
-}
 /* check if the input file is in YUV4MPEG2 (y4m) format */
-EbBool check_if_y4m(EbConfig *cfg) {
-#define YUV4MPEG2_IND_SIZE 9
-    char buf[YUV4MPEG2_IND_SIZE + 1] = {0};
-    if (fread(buf, YUV4MPEG2_IND_SIZE, 1, cfg->input_file) != 1)
-        return EB_FALSE;
+Bool check_if_y4m(EbConfig *cfg) {
+    const size_t y4m_magic_size = 9;
+    if (fread(cfg->y4m_buf, y4m_magic_size, 1, cfg->input_file) != 1)
+        return FALSE;
     if (cfg->input_file != stdin && !cfg->input_file_is_fifo)
         fseek(cfg->input_file, 0, SEEK_SET);
-    else
-        memcpy(cfg->y4m_buf, buf, YUV4MPEG2_IND_SIZE);
-    return !strncmp(buf, "YUV4MPEG2", sizeof("YUV4MPEG2") - 1);
-#undef YUV4MPEG2_IND_SIZE
+    return !strncmp(cfg->y4m_buf, "YUV4MPEG2", y4m_magic_size);
 }

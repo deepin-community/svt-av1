@@ -136,12 +136,18 @@ typedef struct SeqHeader {
      * height syntax elements*/
     uint8_t frame_height_bits;
 
-    /*!< Specifies the maximum frame width minus 1 for the frames represented
-     * by this sequence header */
+    /*!< Specifies the maximum frame width for the frames represented by this sequence header
+     * (equals to max_frame_width_minus_1 + 1, spec 5.5.1).
+     * Actual frame width could be equal to or less than this value. E.g. Use this value to indicate
+     * the maximum width between renditions when switch frame feature is on.
+     * Use original un-aligned max width when writing seq header.*/
     uint16_t max_frame_width;
 
-    /*!< Specifies the maximum frame height minus 1 for the frames represented
-     * by this sequence header */
+    /*!< Specifies the maximum frame height for the frames represented by this sequence header
+     * (equals to max_frame_height_minus_1 + 1, spec 5.5.1).
+     * Actual frame height could be equal to or less than this value. E.g. Use this value to indicate
+     * the maximum height between renditions when switch frame feature is on.
+     * Use original un-aligned max height when writing seq header.*/
     uint16_t max_frame_height;
 
     /*!< Specifies whether frame id numbers are present in the coded video
@@ -313,9 +319,9 @@ typedef struct TilesInfo {
 typedef struct QuantizationParams {
     /*!< Indicates the base frame qindex */
     uint8_t base_q_idx;
-    /*!< Indicates the DC quantizer relative to base_q_idx */
+    /*!< Indicates the DC quantizer relative to base_q_idx - applicable for non-RC configuration(s) only*/
     int8_t delta_q_dc[MAX_MB_PLANE];
-    /*!< Indicates the AC quantizer relative to base_q_idx */
+    /*!< Indicates the AC quantizer relative to base_q_idx - applicable for non-RC configuration(s) only*/
     int8_t delta_q_ac[MAX_MB_PLANE];
     /*!<Specifies that the quantizer matrix will be used to compute quantizers*/
     uint8_t using_qmatrix;
@@ -387,29 +393,6 @@ typedef struct SkipModeInfo {
     int ref_frame_idx_1;
 
 } SkipModeInfo;
-
-typedef struct {
-    /*FRAME_TYPE*/ FrameType frame_type;
-    //REFERENCE_MODE reference_mode;
-
-    unsigned int order_hint;
-    unsigned int display_order_hint;
-    unsigned int frame_number;
-    SkipModeInfo skip_mode_info;
-    int          refresh_frame_flags; // Which ref frames are overwritten by this frame
-    int          frame_refs_short_signaling;
-} CurrentFrame;
-
-//typedef struct GlobalMotionParams {
-//
-//    /*!< Specifies the transform type */
-//    TransformationType  gm_type[ALTREF_FRAME - LAST_FRAME + 1];
-//
-//    /*!< Global motion parameter */
-//    int32_t             gm_params[ALTREF_FRAME - LAST_FRAME + 1][6];
-//
-//} GlobalMotionParams;
-
 typedef struct GlobalMotionParams {
     /*!< Specifies the transform type */
     TransformationType gm_type;
@@ -417,8 +400,6 @@ typedef struct GlobalMotionParams {
     /*!< Global motion parameter */
     int32_t gm_params[6];
 
-    /*!< Previous global motion parameter */
-    //int32_t             prev_gm_params[6];
 } GlobalMotionParams;
 
 typedef struct FrameHeader {

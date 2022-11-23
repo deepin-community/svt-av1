@@ -98,13 +98,13 @@ void apply_segmentation_based_quantization(const BlockGeom *blk_geom, PictureCon
 void setup_segmentation(PictureControlSet *pcs_ptr, SequenceControlSet *scs_ptr) {
     SegmentationParams *segmentation_params = &pcs_ptr->parent_pcs_ptr->frm_hdr.segmentation_params;
     segmentation_params->segmentation_enabled =
-        (EbBool)(scs_ptr->static_config.enable_adaptive_quantization == 1);
+        (Bool)(scs_ptr->static_config.enable_adaptive_quantization == 1);
     if (segmentation_params->segmentation_enabled) {
         segmentation_params->segmentation_update_data =
             1; //always updating for now. Need to set this based on actual deltas
         segmentation_params->segmentation_update_map = 1;
         segmentation_params->segmentation_temporal_update =
-            EB_FALSE; //!(pcs_ptr->parent_pcs_ptr->av1FrameType == KEY_FRAME || pcs_ptr->parent_pcs_ptr->av1FrameType == INTRA_ONLY_FRAME);
+            FALSE; //!(pcs_ptr->parent_pcs_ptr->av1FrameType == KEY_FRAME || pcs_ptr->parent_pcs_ptr->av1FrameType == INTRA_ONLY_FRAME);
         find_segment_qps(segmentation_params, pcs_ptr);
         for (int i = 0; i < MAX_SEGMENTS; i++)
             segmentation_params->feature_enabled[i][SEG_LVL_ALT_Q] = 1;
@@ -133,7 +133,7 @@ void find_segment_qps(SegmentationParams *segmentation_params,
     const float strength = 2; //to tune
 
     // get range of variance
-    for (uint32_t sb_idx = 0; sb_idx < pcs_ptr->sb_total_count; ++sb_idx) {
+    for (uint32_t sb_idx = 0; sb_idx < pcs_ptr->b64_total_count; ++sb_idx) {
         uint16_t *variance_ptr = pcs_ptr->parent_pcs_ptr->variance[sb_idx];
         uint32_t  var_index, local_avg = 0;
         // Loop over all 8x8s in a 64x64
@@ -144,7 +144,7 @@ void find_segment_qps(SegmentationParams *segmentation_params,
         }
         avg_var += (local_avg >> 6);
     }
-    avg_var /= pcs_ptr->sb_total_count;
+    avg_var /= pcs_ptr->b64_total_count;
     avg_var = svt_log2f(avg_var);
 
     //get variance bin edges & QPs

@@ -1,5 +1,96 @@
 # Changelog
 
+## [1.3.0] - 2022-10-18
+
+Encoder
+- Port SIMD optimizations from libDav1D making the conformant path (Inv. Transform) faster
+- Enabling smaller mini-GOP size configurations and tuning it for the low delay mode
+- Tuning the low-latency mode in random access targeting latencies from 250ms to 1s
+- Adding GOP-constrained Rate Control targeting low-latency streaming applications
+- Optimize mode decision features levels for depth partitioning, RDOQ, MD stage0 pruning in-loop filtering temporal filtering and TPL adding more granularity and gaining further quality
+- Preset tuning M0-M13 to smooth the spacing and utilize the quality improvements towards better tradeoffs
+
+Build, Cleanup and Documentation
+- Update preset and API documentation
+- Various functional bug fixes
+- Remove the use of GLOB in cmake and use file names
+
+## [1.2.1] - 2022-08-15
+
+- Fix a crash at the end of the encode that may occur when an invalid metadata packet is sent with the EOS packet
+
+Build, Cleanup
+- y4m header pasring code cleanup
+- API cleanup and enhancements adding string options for RC mode
+- Added option to build without app / dec / enc using the build.sh / build.bat scripts
+
+## [1.2.0] - 2022-08-02
+
+Encoder
+- Improve CRF preset tradeoffs for both the default and fast-decode modes
+- Improve the SSIM-based tradeoffs of the presets without impacting those of PSNR / VMAF
+- Improve CBR mode by enhancing the bit-distribution within the gop
+- Added support for reference frame scaling
+- Added support for quantization matrices
+- Added svtparams patches applicable to ffmpeg 4.4
+- AVX2 optimizations for low-delay mode
+- TPL-based VBR mode improvements
+- Improved Chroma RDOQ
+- Improve TPL QP Scaling
+- Add length info to ivf header
+- Fix support for metadata pass-through
+- Add ability to specify Chroma and Luma qindex offsets independently on top of CRF qp assignments
+
+Build, Cleanup and Documentation
+- Fix multiple API documentation mismatches
+- Updated features documentation
+- Various functional bug fixes
+
+## [1.1.0] - 2022-05-17
+
+Encoder
+- TPL tradeoff optimizations for 4L pred structure
+- Quality-vs-cycles tradeoff improvements across all presets
+- Add ability to force key_frame positions through ffmpeg for CRF mode
+- Minimize the quality impact of fast-decode while maintaining the decoder speedup
+- AVX2 optimizations for low delay mode
+- Fix VQ issues #1896 #1857 and #1819
+
+Build, Cleanup and Documentation
+- API / ABI cleanup and implement independent versioning
+- Add UEB_DLL for static linking with pkgconf
+- Update system requirements docs
+- Rate control code refactoring
+- Fix AVX512 vs AVX2 mismatch
+
+## [1.0.0] - 2022-04-22
+
+Encoder
+- Added S-frames support
+- CBR Rate control mode for low delay
+- Added support for chroma position signalling
+- Added support for skipping denoising pictures after film grain synthesis
+- Extend fast-decode support to cover presets M0-M10
+- Simplified --fast-decode to have only one level
+- Optimized --fast-decode level 1 for better tradeoffs
+- Visual quality improvements addressing issues #1819 / #1297
+- Visual quality fixes and improvements for both tune 0 and 1
+- Quality vs density tradeoffs tuning across all presets in CRF mode with TPL improvements
+- Update default settings to use a longer gop / higher quality preset and lower CRF value
+- Various code cleanups and memory optimizations
+- Additional AVX2 optimizations
+- Fixed all known functional bugs
+- More robust rate control parameter verification
+
+Build and Documentation
+- Major documentation update and re-structure
+- Added more user guides, preset guides and common questions section
+- Improve CI coverage
+- Reduced unnecessary warnings
+- Improved the documentation of the configuration parameters
+- Improve Unit Test Coverage
+- Address C vs asm mismatches
+
 ## [0.9.1] - 2022-02-23
 
 Encoder

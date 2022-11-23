@@ -188,21 +188,9 @@ class CodingOptionTest : public SvtAv1E2ETestFramework {
         EXPECT_GE(config->max_qp_allowed, actual_max_qp)
             << "Max qp allowd " << config->max_qp_allowed << " actual "
             << actual_max_qp;
-        if (config->rate_control_mode == 0) {
+        if (config->rate_control_mode == SVT_AV1_RC_MODE_CQP_OR_CRF) {
             EXPECT_EQ(actual_min_qp, actual_max_qp)
                 << "QP fluctuate in const qp mode";
-        }
-
-        // verify the bitrate
-        if (config->rate_control_mode == 3) {
-            uint32_t avg_bit_rate =
-                (config->frame_rate > 1000 ? config->frame_rate >> 16
-                                           : config->frame_rate) *
-                stream_info->frame_bit_rate;
-            printf("%d--%d\n", config->target_bit_rate, avg_bit_rate);
-            EXPECT_GE(config->target_bit_rate, avg_bit_rate)
-                << "target bit-rate is less than actual: "
-                << config->target_bit_rate << "--" << avg_bit_rate;
         }
 
         // verify tile row and tile column

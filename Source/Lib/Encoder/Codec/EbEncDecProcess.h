@@ -20,7 +20,6 @@
 #include "EbModeDecision.h"
 #include "EbEncInterPrediction.h"
 #include "EbEntropyCoding.h"
-#include "EbTransQuantBuffers.h"
 #include "EbReferenceObject.h"
 #include "EbNeighborArrays.h"
 #include "EbCodingUnit.h"
@@ -42,9 +41,6 @@ typedef struct EncDecContext {
     EbFifo              *picture_demux_output_fifo_ptr; // to picture-manager
     ModeDecisionContext *md_context;
     const BlockGeom     *blk_geom;
-    // MCP Context
-    MotionCompensationPredictionContext *mcp_context;
-
     // Coding Unit Workspace---------------------------
     EbPictureBufferDesc *residual_buffer;
     EbPictureBufferDesc *transform_buffer;
@@ -61,11 +57,10 @@ typedef struct EncDecContext {
     //const CodedBlockStats                *cu_stats;
     uint16_t      blk_origin_x; // within the picture
     uint16_t      blk_origin_y; // within the picture
-    uint8_t       sb_sz;
     uint32_t      sb_index;
     MvUnit        mv_unit;
     uint8_t       txb_itr;
-    EbBool        is_16bit; //enable 10 bit encode in CL
+    Bool          is_16bit; //enable 10 bit encode in CL
     uint32_t      bit_depth;
     EbColorFormat color_format;
     uint64_t      tot_intra_coded_area;
@@ -95,7 +90,8 @@ extern EbErrorType enc_dec_context_ctor(EbThreadContext   *thread_context_ptr,
                                         int tasks_index);
 
 extern void *mode_decision_kernel(void *input_ptr);
-
+void         svt_aom_set_dist_based_ref_pruning_controls(ModeDecisionContext *ctx,
+                                                         uint8_t              dist_based_ref_pruning_level);
 #ifdef __cplusplus
 }
 #endif

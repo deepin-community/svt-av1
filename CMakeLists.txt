@@ -9,14 +9,14 @@
 # PATENTS file, you can obtain it at https://www.aomedia.org/license/patent-license.
 #
 
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.16)
 
 if("${CMAKE_CURRENT_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_BINARY_DIR}")
     message(WARNING "Building in-source is highly not recommended\n"
                     "Please use the Build folder or create your own.")
 endif()
 
-project(svt-av1 VERSION 0.9.1
+project(svt-av1 VERSION 1.3.0
     LANGUAGES C CXX)
 
 if(POLICY CMP0063)
@@ -24,6 +24,9 @@ if(POLICY CMP0063)
 endif()
 if(POLICY CMP0069)
     cmake_policy(SET CMP0069 NEW)
+endif()
+if(POLICY CMP0077)
+    cmake_policy(SET CMP0077 NEW)
 endif()
 
 
@@ -42,9 +45,9 @@ option(COMPILE_C_ONLY "Compile only C code with no simds (autodetect, default of
 include(CheckCSourceCompiles)
 
 check_c_source_compiles("
-#if defined(_M_IX86) || defined(_M_X64) || defined(__i386__) || defined(__x86_64__)
+#if defined(_M_X64) || defined(__x86_64__)
 #else
-#error \"Non-x86\"
+#error \"Non-x64\"
 #endif
 int main(void) {}
 " HAVE_X86_PLATFORM)
@@ -205,7 +208,7 @@ if(UNIX)
         set(CMAKE_C_ARCHIVE_FINISH   "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
         set(CMAKE_CXX_ARCHIVE_FINISH "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
     else()
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie -z noexecstack -z relro -z now")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecstack -z relro -z now")
     endif()
 endif()
 
@@ -216,9 +219,7 @@ function(check_flag lang flag)
     string(REGEX REPLACE "[^A-Za-z0-9]" "_" flag_var "${flag}")
     if(NOT DEFINED ${lang}_FLAG${flag_var})
         execute_process(COMMAND ${CMAKE_COMMAND} -E echo_append "-- Checking ${lang} flag support for: [${flag}] - ")
-        if(NOT MSVC AND CLANG)
-            set(STORE_CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-            set(STORE_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+        if(CMAKE_C_COMPILER_ID MATCHES "Clang")
             set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=unused-command-line-argument")
             set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=unused-command-line-argument")
         endif()
@@ -226,10 +227,6 @@ function(check_flag lang flag)
             check_cxx_compiler_flag("${flag}" "${lang}_FLAG${flag_var}")
         else()
             check_c_compiler_flag("${flag}" "${lang}_FLAG${flag_var}")
-        endif()
-        if(NOT MSVC AND CLANG)
-            set(CMAKE_C_FLAGS "${STORE_CMAKE_C_FLAGS}")
-            set(CMAKE_CXX_FLAGS "${STORE_CMAKE_CXX_FLAGS}")
         endif()
         if(${lang}_FLAG${flag_var})
             execute_process(COMMAND ${CMAKE_COMMAND} -E echo "Yes")
@@ -446,7 +443,8 @@ elseif(SANITIZER STREQUAL "undefined")
 elseif(SANITIZER STREQUAL "integer")
     add_clike_and_ld_flags(-fsanitize=integer)
 elseif(SANITIZER)
-    message(FATAL_ERROR "Unknown sanitizer: ${SANITIZER}")
+    message(WARNING "Unknown sanitizer: ${SANITIZER}, going to try adding it anyway")
+    add_clike_and_ld_flags(-fsanitize=${SANITIZER})
 endif()
 
 if(SANITIZER)

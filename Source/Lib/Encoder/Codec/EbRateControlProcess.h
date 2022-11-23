@@ -17,9 +17,9 @@
 #include "EbSvtAv1Enc.h"
 #include "EbPictureControlSet.h"
 #include "EbObject.h"
+#include "EbInvTransforms.h"
 
 #define MINQ_ADJ_LIMIT 48
-#define MINQ_ADJ_LIMIT_CQ 20
 #define HIGH_UNDERSHOOT_RATIO 2
 #define CCOEFF_INIT_FACT 2
 #define SAD_CLIP_COEFF 5
@@ -70,9 +70,9 @@ typedef enum rate_factor_level {
     KF_STD             = 5,
     RATE_FACTOR_LEVELS = 6
 } rate_factor_level;
-// max bit rate average period in second. default is set to 2 second
-#define MAX_RATE_AVG_PERIOD_IN_SEC 2
 #define CODED_FRAMES_STAT_QUEUE_MAX_DEPTH 2000
+// max bit rate average period
+#define MAX_RATE_AVG_PERIOD (CODED_FRAMES_STAT_QUEUE_MAX_DEPTH >> 1)
 #define CRITICAL_BUFFER_LEVEL 15
 #define OPTIMAL_BUFFER_LEVEL 70
 /**************************************
@@ -82,29 +82,45 @@ typedef struct coded_frames_stats_entry {
     EbDctor  dctor;
     uint64_t picture_number;
     int64_t  frame_total_bit_actual;
-    EbBool   end_of_sequence_flag;
+    Bool     end_of_sequence_flag;
 } coded_frames_stats_entry;
+
+typedef enum {
+    NO_RESIZE      = 0,
+    DOWN_THREEFOUR = 1, // From orig to 3/4.
+    DOWN_ONEHALF   = 2, // From orig or 3/4 to 1/2.
+    UP_THREEFOUR   = -1, // From 1/2 to 3/4.
+    UP_ORIG        = -2, // From 1/2 or 3/4 to orig.
+} RESIZE_ACTION;
+
+typedef enum { ORIG = 0, THREE_QUARTER = 1, ONE_HALF = 2 } RESIZE_STATE;
+
+/*!
+ * \brief Desired dimensions for an externally triggered resize.
+ *
+ * When resize is triggered externally, the desired dimensions are stored in
+ * this struct until used in the next frame to be coded. These values are
+ * effective only for one frame and are reset after they are used.
+ */
+typedef struct {
+    RESIZE_STATE resize_state;
+    uint8_t      resize_denom;
+} ResizePendingParams;
 
 extern EbErrorType rate_control_coded_frames_stats_context_ctor(coded_frames_stats_entry *entry_ptr,
                                                                 uint64_t picture_number);
 typedef struct {
-    int    last_boosted_qindex; // Last boosted GF/KF/ARF q
-    int    gfu_boost;
-    int    kf_boost;
-    double rate_correction_factors[MAX_TEMPORAL_LAYERS + 1];
-    int    min_gf_interval;
-    int    max_gf_interval;
-    int    frames_till_gf_update_due;
-    int    onepass_cbr_mode; // 0: not 1pass cbr, 1: 1pass cbr normal, 2: 1pass cbr real time
-    int    baseline_gf_interval;
-    int    constrained_gf_group;
-    int    frames_to_key;
-    int    frames_since_key;
-    int    this_key_frame_forced;
-    int    is_src_frame_alt_ref;
-
+    int     last_boosted_qindex; // Last boosted GF/KF/ARF q
+    int     gfu_boost;
+    int     kf_boost;
+    double  rate_correction_factors[MAX_TEMPORAL_LAYERS + 1];
+    int     onepass_cbr_mode; // 0: not 1pass cbr, 1: 1pass cbr for low delay
+    int     baseline_gf_interval;
+    int     constrained_gf_group;
+    int     frames_to_key;
+    int     frames_since_key;
+    int     this_key_frame_forced;
     int     avg_frame_bandwidth; // Average frame size target for clip
-    int     min_frame_bandwidth; // Minimum allocation used for any frame
     int     max_frame_bandwidth; // Maximum burst rate allowed for a frame.
     int     avg_frame_qindex[FRAME_TYPES];
     int64_t buffer_level;
@@ -117,7 +133,6 @@ typedef struct {
 
     int64_t total_actual_bits;
     int64_t total_target_bits;
-    int64_t total_target_vs_actual;
 
     int worst_quality;
     int best_quality;
@@ -145,13 +160,9 @@ typedef struct {
     int prev_avg_frame_bandwidth; //only for CBR?
     int active_worst_quality;
     int active_best_quality[MAX_ARF_LAYERS + 1];
-    int gf_interval;
 
     // gop bit budget
     int64_t gf_group_bits;
-
-    // Total number of stats used only for kf_boost calculation.
-    int num_stats_used_for_kf_boost;
     // Total number of stats used only for gfu_boost calculation.
     int num_stats_used_for_gfu_boost;
     // Total number of stats required by gfu_boost calculation.
@@ -167,20 +178,17 @@ typedef struct {
     uint64_t min_bit_actual_per_gop;
     uint64_t avg_bit_actual_per_gop;
     uint64_t rate_average_periodin_frames;
-} RATE_CONTROL;
-typedef struct RateControlIntervalParamContext {
-    EbDctor  dctor;
-    uint64_t first_poc;
-    uint64_t last_poc;
 
-    // Projected total bits available for a key frame group of frames
-    int64_t kf_group_bits;
-    // Error score of frames still to be coded in kf group
-    int64_t kf_group_error_left;
-    uint8_t end_of_seq_seen;
-    int32_t processed_frame_number;
-    uint8_t last_i_qp;
-} RateControlIntervalParamContext;
+    EbHandle rc_mutex;
+    // For dynamic resize, 1 pass cbr.
+    RESIZE_STATE resize_state;
+    int32_t      resize_avg_qp;
+    int32_t      resize_buffer_underflow;
+    int32_t      resize_count;
+    int32_t      last_q[FRAME_TYPES]; // Q used on last encoded frame of the given type.
+
+} RATE_CONTROL;
+
 /**************************************
  * Input Port Types
  **************************************/
@@ -218,8 +226,8 @@ typedef struct PicMgrPorts {
 /**************************************
  * Extern Function Declarations
  **************************************/
-int32_t svt_av1_convert_qindex_to_q_fp8(int32_t qindex, AomBitDepth bit_depth);
-double  svt_av1_convert_qindex_to_q(int32_t qindex, AomBitDepth bit_depth);
+int32_t svt_av1_convert_qindex_to_q_fp8(int32_t qindex, EbBitDepth bit_depth);
+double  svt_av1_convert_qindex_to_q(int32_t qindex, EbBitDepth bit_depth);
 int     svt_av1_rc_get_default_min_gf_interval(int width, int height, double framerate);
 int     svt_av1_rc_get_default_max_gf_interval(double framerate, int min_gf_interval);
 double  svt_av1_get_gfu_boost_projection_factor(double min_factor, double max_factor,
@@ -229,4 +237,9 @@ EbErrorType rate_control_context_ctor(EbThreadContext   *thread_context_ptr,
                                       const EbEncHandle *enc_handle_ptr, int me_port_index);
 
 extern void *rate_control_kernel(void *input_ptr);
+int svt_aom_compute_rd_mult_based_on_qindex(EbBitDepth bit_depth, FRAME_UPDATE_TYPE update_type,
+                                            int qindex);
+struct PictureControlSet;
+int svt_aom_compute_rd_mult(struct PictureControlSet *pcs, uint8_t q_index, uint8_t me_q_index,
+                            uint8_t bit_depth);
 #endif // EbRateControl_h

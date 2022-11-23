@@ -142,21 +142,6 @@ enum {
 } UENUM1BYTE(FRAME_CONTENT_TYPE);
 
 typedef struct {
-    unsigned char             index;
-    /*frame_update_type*/ int update_type[MAX_STATIC_GF_GROUP_LENGTH];
-    unsigned char             frame_disp_idx[MAX_STATIC_GF_GROUP_LENGTH];
-
-    // TODO(jingning): Unify the data structure used here after the new control
-    // mechanism is in place.
-    int layer_depth[MAX_STATIC_GF_GROUP_LENGTH];
-    int arf_boost[MAX_STATIC_GF_GROUP_LENGTH];
-    int max_layer_depth;
-    int max_layer_depth_allowed;
-    int bit_allocation[MAX_STATIC_GF_GROUP_LENGTH];
-    int size;
-} GF_GROUP;
-
-typedef struct {
     FIRSTPASS_STATS *stats_in_start;
     // used when writing the stat.i.e in the first pass
     FIRSTPASS_STATS *stats_in_end_write;
@@ -165,6 +150,7 @@ typedef struct {
     FIRSTPASS_STATS *total_stats;
     FIRSTPASS_STATS *total_left_stats;
     int64_t          last_frame_accumulated;
+    EbHandle         stats_in_write_mutex; // mutex for write point protection
 } STATS_BUFFER_CTX;
 
 /*!\endcond */
@@ -173,8 +159,6 @@ typedef struct {
  * \brief Two pass status and control data.
  */
 typedef struct {
-    /*!\cond */
-    unsigned int section_intra_rating;
     // Circular queue of first pass stats stored for most recent frames.
     // cpi->output_pkt_list[i].data.twopass_stats.buf points to actual data stored
     // here.
@@ -186,9 +170,6 @@ typedef struct {
     double                 modified_error_max;
     double                 modified_error_left;
 
-    // An indication of the content type of the current frame
-    FRAME_CONTENT_TYPE fr_content_type;
-
     // Projected total bits available for a key frame group of frames
     int64_t kf_group_bits;
 
@@ -196,7 +177,6 @@ typedef struct {
     int64_t kf_group_error_left;
 
     int     kf_zeromotion_pct;
-    int     last_kfgroup_zeromotion_pct;
     int     extend_minq;
     int     extend_maxq;
     int     extend_minq_fast;
@@ -256,8 +236,6 @@ typedef struct {
     // the ith MB in raster scan order.
     int *raw_motion_err_list;
 } FirstPassData;
-
-struct EncodeFrameParams;
 struct AV1EncoderConfig;
 struct TileDataEnc;
 

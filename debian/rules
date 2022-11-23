@@ -7,7 +7,7 @@ CONFIG_ARGS := -DCMAKE_BUILD_TYPE=Release \
 
 DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
 
-ifeq (i386,$(DEB_HOST_ARCH))
+ifneq (,$(filter i386 x32, $(DEB_HOST_ARCH)))
 CONFIG_ARGS += -DCOMPILE_C_ONLY=ON
 endif
 

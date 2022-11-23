@@ -34,10 +34,10 @@ static const uint32_t ns_blk_num[10]    = {1, 2, 2, 4, 3, 3, 3, 3, 4, 4};
 
 typedef struct MdcpLocalBlkStruct {
     uint64_t early_cost;
-    EbBool   early_split_flag;
+    Bool     early_split_flag;
     uint32_t split_context;
-    EbBool   selected_cu;
-    EbBool   stop_split;
+    Bool     selected_cu;
+    Bool     stop_split;
 } MdcpLocalBlkStruct;
 
 typedef struct ModeDecisionConfigurationContext {
@@ -55,6 +55,11 @@ EbErrorType mode_decision_configuration_context_ctor(EbThreadContext   *thread_c
                                                      int input_index, int output_index);
 
 extern void *mode_decision_configuration_kernel(void *input_ptr);
+
+uint8_t svt_aom_get_disallow_below_16x16_picture_level(EncMode           enc_mode,
+                                                       EbInputResolution resolution, Bool is_islice,
+                                                       Bool sc_class1, Bool is_ref);
+
 #ifdef __cplusplus
 }
 #endif

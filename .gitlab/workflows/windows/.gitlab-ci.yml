@@ -33,12 +33,10 @@
 
 .windows-unit-test-base:
   extends: .windows-test-base
-  variables:
-    GTEST_OUTPUT: xml:report.xml
   artifacts:
     when: always
     reports:
-      junit: report.xml
+      junit: reports/*.xml
   needs:
     - Win64 (MSVC, Tests)
 
@@ -49,8 +47,8 @@
 Win64 (MSVC, Tests):
   extends: .windows-compiler-base
   variables:
-    CFLAGS: /WX
-    CXXFLAGS: /WX
+    CFLAGS: /WX /D_CRT_SECURE_NO_WARNINGS=1
+    CXXFLAGS: /WX /D_CRT_SECURE_NO_WARNINGS=1
     CMAKE_GENERATOR: Visual Studio 16 2019
   parallel:
     matrix:
@@ -69,22 +67,23 @@ Win64 (MSVC, Tests):
 
 Win64 Unit Tests:
   extends: .windows-unit-test-base
+  variables:
+    SVT_AV1_TEST_VECTOR_PATH: $CI_PROJECT_DIR/test/vectors
+    TOTAL_SHARDS: 4
   parallel:
     matrix:
-      - UNIT_TEST: SvtAv1UnitTests
-        GTEST_TOTAL_SHARDS: 3
-        GTEST_SHARD_INDEX: [0, 1, 2]
-      - UNIT_TEST: SvtAv1E2ETests
-        SVT_AV1_TEST_VECTOR_PATH: $CI_PROJECT_DIR/test/vectors
+      - SHARD_INDEX: [0, 1, 2, 3]
   cache:
     key: testvectors
     paths:
       - test/vectors
     policy: pull-push
+  before_script:
+    - Invoke-WebRequest -OutFile gtest_parallel.py -Uri https://raw.githubusercontent.com/1480c1/gtest-parallel/unique_id/gtest_parallel.py
   script:
     - cmake -B Build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
     - cmake --build Build --target TestVectors
-    - "& ./Bin/Release/$env:UNIT_TEST --gtest_filter=-*FFT*"
+    - python gtest_parallel.py --print_test_times --shard_index=$env:SHARD_INDEX --shard_count=$env:TOTAL_SHARDS ./Bin/Release/SvtAv1UnitTests ./Bin/Release/SvtAv1E2ETests -- --gtest_output="xml:reports/{#}.xml"
 
 Win64 Enc Test:
   extends: .windows-test-base

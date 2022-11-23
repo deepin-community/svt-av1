@@ -17,19 +17,6 @@
 #include "EbModeDecisionProcess.h"
 #include "common_dsp_rtcd.h"
 
-static PartitionType from_shape_to_part[] = {
-        PARTITION_NONE,
-        PARTITION_HORZ,
-        PARTITION_VERT,
-        PARTITION_HORZ_A,
-        PARTITION_HORZ_B,
-        PARTITION_VERT_A,
-        PARTITION_VERT_B,
-        PARTITION_HORZ_4,
-        PARTITION_VERT_4,
-        PARTITION_SPLIT
-};
-
 IntraSize intra_unit[] =
 {
     /*Note: e.g for V: there are case where we need the first
@@ -597,7 +584,7 @@ void svt_av1_predict_intra_block(
 }
 
 void svt_av1_predict_intra_block_16bit(
-        EbBitDepthEnum bit_depth,
+        EbBitDepth bit_depth,
         STAGE       stage,
         const BlockGeom * blk_geom,
         MacroBlockD* xd,
@@ -661,7 +648,7 @@ void svt_av1_predict_intra_block_16bit(
         const uint8_t *const map = palette_info->color_idx_map;
         const uint16_t *const palette =
             palette_info->pmi.palette_colors + plane * PALETTE_MAX_SIZE;
-        uint16_t              max_val = (bit_depth == EB_8BIT) ? 0xFF : 0xFFFF;
+        uint16_t              max_val = (bit_depth == EB_EIGHT_BIT) ? 0xFF : 0xFFFF;
         for (int32_t r = 0; r < txhpx; ++r)
             for (int32_t c = 0; c < txwpx; ++c)
                 dst[r * dst_stride + c] = palette[map[(r + y) * wpx + c + x]] > max_val ? max_val : palette[map[(r + y) * wpx + c + x]];
@@ -756,8 +743,8 @@ EbErrorType svt_av1_intra_prediction_cl(
     }
     TxSize  tx_size = md_context_ptr->blk_geom->txsize[candidate_buffer_ptr->candidate_ptr->tx_depth][0]; // Nader - Intra 128x128 not supported
     TxSize  tx_size_chroma = md_context_ptr->blk_geom->txsize_uv[candidate_buffer_ptr->candidate_ptr->tx_depth][0]; //Nader - Intra 128x128 not supported
-    uint32_t sb_size_luma   = pcs_ptr->parent_pcs_ptr->scs_ptr->sb_size_pix;
-    uint32_t sb_size_chroma   = pcs_ptr->parent_pcs_ptr->scs_ptr->sb_size_pix/2;
+    uint32_t sb_size_luma   = pcs_ptr->parent_pcs_ptr->scs_ptr->sb_size;
+    uint32_t sb_size_chroma   = pcs_ptr->parent_pcs_ptr->scs_ptr->sb_size/2;
 
     if(!md_context_ptr->hbd_mode_decision) {
         uint8_t    top_neigh_array[64 * 2 + 1];
@@ -890,7 +877,7 @@ EbErrorType svt_av1_intra_prediction_cl(
                     md_context_ptr->blk_origin_y,                  //uint32_t cuOrgY
                     plane ? ((md_context_ptr->blk_geom->origin_x >> 3) << 3) / 2 : md_context_ptr->blk_geom->origin_x,  //uint32_t cuOrgX used only for prediction Ptr
                     plane ? ((md_context_ptr->blk_geom->origin_y >> 3) << 3) / 2 : md_context_ptr->blk_geom->origin_y,   //uint32_t cuOrgY used only for prediction Ptr
-                    &((SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr)->seq_header
+                    &pcs_ptr->scs_ptr->seq_header
             );
         }
     } else {
@@ -1000,7 +987,7 @@ EbErrorType svt_av1_intra_prediction_cl(
             }
 
             svt_av1_predict_intra_block_16bit(
-                    EB_10BIT,
+                    EB_TEN_BIT,
                     !ED_STAGE,
                     md_context_ptr->blk_geom,
                     md_context_ptr->blk_ptr->av1xd,
@@ -1026,7 +1013,7 @@ EbErrorType svt_av1_intra_prediction_cl(
                     md_context_ptr->blk_origin_y,                  //uint32_t cuOrgY
                     plane ? ((md_context_ptr->blk_geom->origin_x >> 3) << 3) / 2 : md_context_ptr->blk_geom->origin_x,  //uint32_t cuOrgX used only for prediction Ptr
                     plane ? ((md_context_ptr->blk_geom->origin_y >> 3) << 3) / 2 : md_context_ptr->blk_geom->origin_y,   //uint32_t cuOrgY used only for prediction Ptr
-                    &((SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr)->seq_header
+                    &pcs_ptr->scs_ptr->seq_header
             );
         }
     }
@@ -1055,7 +1042,7 @@ EbErrorType  intra_luma_prediction_for_interintra(
     }
     TxSize  tx_size = md_context_ptr->blk_geom->txsize[0][0];  //CHKN  TOcheck
     PredictionMode mode = interintra_to_intra_mode[interintra_mode];
-    uint32_t        sb_size_luma   = pcs_ptr->parent_pcs_ptr->scs_ptr->sb_size_pix;
+    uint32_t        sb_size_luma   = pcs_ptr->parent_pcs_ptr->scs_ptr->sb_size;
 
     if (!md_context_ptr->hbd_mode_decision) {
         uint8_t    top_neigh_array[64 * 2 + 1];
@@ -1096,7 +1083,7 @@ EbErrorType  intra_luma_prediction_for_interintra(
                 md_context_ptr->blk_origin_y,                            //uint32_t cuOrgY
                 0,                                                      //cuOrgX used only for prediction Ptr
                 0,                                                       //cuOrgY used only for prediction Ptr
-                &((SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr)->seq_header
+                &pcs_ptr->scs_ptr->seq_header
         );
     } else {
         uint16_t top_neigh_array[64 * 2 + 1];
@@ -1114,7 +1101,7 @@ EbErrorType  intra_luma_prediction_for_interintra(
             ((uint16_t*)(md_context_ptr->luma_recon_neighbor_array16bit->top_left_array) + md_context_ptr->luma_recon_neighbor_array16bit->max_pic_h + md_context_ptr->blk_origin_x - md_context_ptr->blk_origin_y)[0];
 
         svt_av1_predict_intra_block_16bit(
-                EB_10BIT,
+                EB_TEN_BIT,
                 !ED_STAGE,
                 md_context_ptr->blk_geom,
                 md_context_ptr->blk_ptr->av1xd,
@@ -1139,7 +1126,7 @@ EbErrorType  intra_luma_prediction_for_interintra(
                 md_context_ptr->blk_origin_y,                            //uint32_t cuOrgY
                 0,                                                      //cuOrgX used only for prediction Ptr
                 0,                                                      //cuOrgY used only for prediction Ptr
-                &((SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr)->seq_header
+                &pcs_ptr->scs_ptr->seq_header
         );
     }
 

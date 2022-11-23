@@ -1,54 +1,9 @@
+[Top level](../README.md)
+
 # Encoder Design for SVT-AV1 (Scalable Video Technology for AV1 Encoder)
 
 ## Table of Contents
-- [Revision History](#revision-history)
-- [Table of Contents](#table-of-contents)
-- [List of Figures](#list-of-figures)
-- [List of Tables](#list-of-tables)
-- [Introduction](#introduction)
-- [Definitions](#definitions)
-  * [General Definitions](#general-definitions)
-  * [Source Partitioning](#source-partitioning)
-- [High-level encoder architecture](#high-level-encoder-architecture)
-- [Inter-process data and control management](#inter-process-data-and-control-management)
-  * [Objects](#objects)
-    * [Sequence Control Set](#sequence-control-set)
-    * [Picture Control Set](#picture-control-set)
-    * [Picture Descriptors](#picture-descriptors)
-    * [Results](#results)
-  * [System Resource Manager (SRM)](#system-resource-manager-srm)
-    * [Resource manager components](#resource-manager-components)
-      * [Empty object FIFO](#empty-object-FIFO)
-      * [Producer empty object FIFO](#producer-empty-object-FIFO)
-      * [Producer process](#producer-process)
-      * [Producer process FIFO](#producer-process-FIFO)
-      * [Full object FIFO](#full-object-FIFO)
-      * [Consumer full object FIFO](#consumer-full-object-FIFO)
-      * [Consumer process](#consumer-process)
-      * [Consumer process FIFO](#consumer-process-FIFO)
-    * [Resource manager execution flow snapshot](#resource-manager-execution-flow-snapshot)
-  * [High-level Data Structures](#high-level-data-structures)
-    * [Configuration Set](#configuration-set)
-    * [Sequence Control Set (SCS)](#sequence-control-set-scs)
-    * [Picture Control Set (PCS)](#picture-control-set-pcs)
-    * [Picture Descriptors](#picture-descriptors)
-- [Encoder Processes and Algorithms](#encoder-processes-and-algorithms)
-  * [Resource Coordination Process](#resource-coordination-process)
-  * [Picture Analysis Process](#pictureanalysisprocess)
-  * [Picture Decision Process](#picture-decision-process)
-  * [Motion Estimation Process](#motion-estimation-process)
-  * [Initial Rate Control Process](#initial-rate-control-process)
-  * [Source-based Operations Process](#source-based-operations-process)
-  * [Picture Manager Process](#picture-manager-process)
-  * [Rate Control Process](#rate-control-process)
-  * [Mode Decision Configuration Process](#mode-decision-configuration-process)
-  * [Mode Decision](#mode-decision)
-  * [Deblocking Loop Filter Process](#deblocking-loop-filter-process)
-  * [Constrained Directional Enhancement Filter Process](#constrained-directional-enhancement-filter-process)
-  * [Restoration Filter Process](#restoration-filter-process)
-  * [Entropy Coding Process](#entropy-coding-process)
-  * [Packetization Process](#packetization-process)
-- [Detailed Feature Implementation Design Appendices](#detailed-feature-implementation-design-appendices)
+__[TOC]__
 
 ## List of Figures
 - [Figure 1](#figure-1): Five-layer prediction structure used in the SVT-AV1 encoder with one reference picture in each direction.
@@ -74,7 +29,13 @@
 
 # Introduction
 
-This document describes the Intel SVT-AV1 encoder design. In particular, the encoder block diagram and the system resource manager are described. A brief description of the various processes involved in the encoder pipeline is also presented. Details on the encoder processes are included in appendices. This document is meant to be an accompanying document to the “C Model” source code, which contains the more specific details of the inner workings of each algorithm.
+This document describes the Intel SVT-AV1 encoder design. In particular, the
+encoder block diagram and the system resource manager are described. A brief
+description of the various processes involved in the encoder pipeline is also
+presented. Details on the encoder processes are included in appendices. This
+document is meant to be an accompanying document to the “C Model” source code,
+which contains the more specific details of the inner workings of each
+algorithm.
 
 # Definitions
 
@@ -82,34 +43,38 @@ This section contains definitions used throughout this design document.
 
 ### General Definitions
 
-|  **Term** |  **Definition** |
-|---|---|
-| Picture  |  Collection of luma and chroma samples assembled into rectangular regions with a width, height and sample bit-depth. |
-|  Super block (SB) |  A square block of luma and chroma samples defined to have a size of either 64x64 or 128x128 luma samples. |
-|Block|  A square or rectangular region of data that is part of a SB and that is obtained through the partitioning of the SB. |
-| Transform block  | A square or rectangular region of data whose size is the same as or smaller than the size of the corresponding block. |
-| Bitstream  | A collection of bits corresponding to entropy coded data. |
-| Syntax elements  | Pre-entropy coder encoded symbols used during the decoding reconstruction process.|
-| Tiles  |  A rectangular collection of SBs which are independently decodable. |
-| Groups-of-Pictures (GoP)  | A collection of pictures with a particular referencing structure. |
-| SAD  | Sum of absolute differences, representing the sum of absolute values of sample differences; distortion measurement. |
-| SSE  | Sum of squared sample error; distortion measurement. |
+| **Term**                 | **Definition**                                                                                                        |
+| ---                      | ---                                                                                                                   |
+| Picture                  | Collection of luma and chroma samples assembled into rectangular regions with a width, height and sample bit-depth.   |
+| Super block (SB)         | A square block of luma and chroma samples defined to have a size of either 64x64 or 128x128 luma samples.             |
+| Block                    | A square or rectangular region of data that is part of a SB and that is obtained through the partitioning of the SB.  |
+| Transform block          | A square or rectangular region of data whose size is the same as or smaller than the size of the corresponding block. |
+| Bitstream                | A collection of bits corresponding to entropy coded data.                                                             |
+| Syntax elements          | Pre-entropy coder encoded symbols used during the decoding reconstruction process.                                    |
+| Tiles                    | A rectangular collection of SBs which are independently decodable.                                                    |
+| Groups-of-Pictures (GoP) | A collection of pictures with a particular referencing structure.                                                     |
+| SAD                      | Sum of absolute differences, representing the sum of absolute values of sample differences; distortion measurement.   |
+| SSE                      | Sum of squared sample error; distortion measurement.                                                                  |
 
 
 ### Source Partitioning
 
-The source video is partitioned into various groupings of various spatial and temporal divisions.
-The following partitions and nomenclature are used extensively within this document and the source code.
-Furthermore, the following partitioning scheme determines data flow and influences algorithmic designs.
-At the highest level, pictures in the source video are grouped into groups of pictures (GoPs)
-that are defined according the prediction structure. Figure 1 shows an example of the relationship between
-pictures contained in a five-layer prediction structure where each frame references only one picture in
-each direction. In a prediction structure, each picture is of a particular prediction type and belongs to
-a specific temporal layer. Also, each picture might reference other pictures depending on its picture type
-and it might be referenced itself multiple times or not at all depending on the Prediction Structure used
-and the picture’s relative position within the period. In the example shown in Figure 1, Pictures 0 and 16 are
-said to belong to temporal layer 0 or base layer, whereas pictures 1, 3, 5, 7, 9, 11, 13 and 15 are said to
-belong to the non-reference layer or temporal layer 4.
+The source video is partitioned into various groupings of various spatial and
+temporal divisions. The following partitions and nomenclature are used
+extensively within this document and the source code. Furthermore, the
+following partitioning scheme determines data flow and influences algorithmic
+designs. At the highest level, pictures in the source video are grouped into
+groups of pictures (GoPs) that are defined according the prediction structure.
+Figure 1 shows an example of the relationship between pictures contained in a
+five-layer prediction structure where each frame references only one picture in
+each direction. In a prediction structure, each picture is of a particular
+prediction type and belongs to a specific temporal layer. Also, each picture
+might reference other pictures depending on its picture type and it might be
+referenced itself multiple times or not at all depending on the Prediction
+Structure used and the picture’s relative position within the period. In the
+example shown in Figure 1, Pictures 0 and 16 are said to belong to temporal
+layer 0 or base layer, whereas pictures 1, 3, 5, 7, 9, 11, 13 and 15 are said
+to belong to the non-reference layer or temporal layer 4.
 
 ![image1](./img/image1.png)
 <a name = "figure-1"></a>
@@ -194,28 +159,34 @@ processing is shown in Figure 5.
 
 ## Inter-process data and control management
 
-*System resource managers* perform inter-process data and control
-management. They manage *objects* and connect processes to one another
-by controlling how objects are passed. Objects encapsulate data and
-control information and are organized into four types: results, sequence
-control sets, picture control sets, and picture descriptors. Objects are
-described later in this section.
+*System resource managers* perform inter-process data and control management.
+They manage *objects* and connect processes to one another by controlling how
+objects are passed. Objects encapsulate data and control information and are
+organized into four types: results, sequence control sets, picture control
+sets, and picture descriptors. Objects are described later in this section.
 
-Figure 6 shows a block diagram of a system resource manager. As depicted
-in the diagram, the empty object path begins when an empty object from the
-empty object FIFO is assigned to one of N producer processes. The producer
-process fills the empty object with data and control information and queues
-the now full object onto the full object FIFO. In a similar manner, the full object path begins when a full object from
-the full object FIFO is assigned to one of M consumer processes. The consumer
-process uses the information in the full object and completes the data path by
-queuing the now empty object back onto the original empty object FIFO. To better
-understand how the encoder block diagram in Figure 4 and the system resource manager
-block diagram in Figure 6 relate to one another, we have used matching line colors to
-indicate corresponding object flow. It is important to note that each encoder process
-acts as both a producer and consumer of objects to processes occurring later, and
-respectively, earlier in the encoder pipeline.
+Figure 6 shows a block diagram of a system resource manager. As depicted in the
+diagram, the empty object path begins when an empty object from the empty
+object FIFO is assigned to one of N producer processes. The producer process
+fills the empty object with data and control information and queues the now
+full object onto the full object FIFO. In a similar manner, the full object
+path begins when a full object from the full object FIFO is assigned to one of
+M consumer processes. The consumer process uses the information in the full
+object and completes the data path by queuing the now empty object back onto
+the original empty object FIFO. To better understand how the encoder block
+diagram in Figure 4 and the system resource manager block diagram in Figure 6
+relate to one another, we have used matching line colors to indicate
+corresponding object flow. It is important to note that each encoder process
+acts as both a producer and consumer of objects to processes occurring later,
+and respectively, earlier in the encoder pipeline.
 
-The system resource manager dynamically assigns objects to processes to minimize idle process time. In addition, separate coordination of the empty and full object paths allows a great deal of configuration flexibility. This flexibility is important when, for example, producer and consumer processes require differing amounts of computational resources. In this case, a system resource manager may have N producers and M consumers where N is not equal to M.
+The system resource manager dynamically assigns objects to processes to
+minimize idle process time. In addition, separate coordination of the empty and
+full object paths allows a great deal of configuration flexibility. This
+flexibility is important when, for example, producer and consumer processes
+require differing amounts of computational resources. In this case, a system
+resource manager may have N producers and M consumers where N is not equal to
+M.
 
 ![image6](./img/image6.png)
 <a name = "figure-6"></a>
@@ -309,12 +280,12 @@ encoder pipeline.
 
 #### Producer empty object FIFO
 
-The ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) producer empty object FIFO contains empty objects
-that have been assigned to the ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) producer process. The
-![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) producer process requires an empty object from the
-![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) producer empty object FIFO in order to begin execution.
-The ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) producer empty object FIFO is hardcoded to the
-![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) producer process.
+The $`\mathrm{i^{th}}`$ producer empty object FIFO contains empty objects
+that have been assigned to the $`\mathrm{i^{th}}`$ producer process. The
+$`\mathrm{i^{th}}`$ producer process requires an empty object from the
+$`\mathrm{i^{th}}`$ producer empty object FIFO in order to begin execution.
+The $`\mathrm{i^{th}}`$ producer empty object FIFO is hardcoded to the
+$`\mathrm{i^{th}}`$ producer process.
 
 #### Producer process
 
@@ -342,12 +313,12 @@ manage results objects have full object FIFOs.
 
 #### Consumer full object FIFO
 
-The ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{j^{th}}) consumer full object FIFO contains full objects that
-have been assigned to the ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{j^{th}}) consumer process. The
-![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{j^{th}}) consumer process requires an empty object from the
-![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{j^{th}}) consumer full object FIFO in order to begin execution.
-The ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{j^{th}}) consumer full object FIFO is hardwired to the
-![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{j^{th}}) consumer process.
+The $`\mathrm{j^{th}}`$ consumer full object FIFO contains full objects that
+have been assigned to the $`\mathrm{j^{th}}`$ consumer process. The
+$`\mathrm{j^{th}}`$ consumer process requires an empty object from the
+$`\mathrm{j^{th}}`$ consumer full object FIFO in order to begin execution.
+The $`\mathrm{j^{th}}`$ consumer full object FIFO is hardwired to the
+$`\mathrm{j^{th}}`$ consumer process.
 
 #### Consumer process
 
@@ -402,11 +373,11 @@ Note the following:
 carried out in the system resource code, while steps 4 and 5 are
 executed by the consumer process.
 
-- The ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) producer process will not become active if the
-![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) producer empty object FIFO contains no objects
+- The $`\mathrm{i^{th}}`$ producer process will not become active if the
+$`\mathrm{i^{th}}`$ producer empty object FIFO contains no objects
 
-- The ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) consumer process will not become active if the
-![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{i^{th}}) consumer full object FIFO contains no objects
+- The $`\mathrm{i^{th}}`$ consumer process will not become active if the
+$`\mathrm{i^{th}}`$ consumer full object FIFO contains no objects
 
 - The tangerine arrows depict the producer processes’ acquisition of
 empty objects and are not described in the execution flow snapshot
@@ -449,13 +420,15 @@ sequence. The relevant data structure is SequenceControlSet\_s.
 ### Picture Control Set (PCS)
 
 The Picture Control Set contains the information for individually coded
-pictures. The information is split between Picture Parent Control Set
-and Picture Control Set. Picture Parent Control Set is used in the first few processes
-in the pipeline (from Resource Coordination process to Source-Based Operations process) and lasts the whole time the picture is in the encoder pipeline. The Picture
-control set includes a pointer to the Picture Parent Control Set and
-includes also additional information needed in the subsequent processes
-starting at the Picture Manager process (i.e. in the closed loop). The relevant data structures
-are PictureParentControlSet\_s and PictureControlSet\_s.
+pictures. The information is split between Picture Parent Control Set and
+Picture Control Set. Picture Parent Control Set is used in the first few
+processes in the pipeline (from Resource Coordination process to Source-Based
+Operations process) and lasts the whole time the picture is in the encoder
+pipeline. The Picture control set includes a pointer to the Picture Parent
+Control Set and includes also additional information needed in the subsequent
+processes starting at the Picture Manager process (i.e. in the closed loop).
+The relevant data structures are PictureParentControlSet\_s and
+PictureControlSet\_s.
 
 ##### <a name = "table-3"> Table 3: Examples of Picture Parent Control Set Members </a>
 
@@ -517,7 +490,7 @@ procedures, such as resampling, color space conversion, or tone mapping.
 The Picture Analysis processes can be multithreaded and as such can
 process multiple input pictures at a time. The encoder pre-analysis
 includes creating an n-bin histogram for the purpose of scene change
-detection, gathering the ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{1^{st}}) and ![latex_i^th](http://latex.codecogs.com/gif.latex?\mathrm{2^{nd}}) moment
+detection, gathering the $`\mathrm{1^{st}}`$ and $`\mathrm{2^{nd}}`$ moment
 statistics for each 8x8 block in the picture which are used to compute
 variance, input subsampling and screen content detection. All
 image-modifying functions should be completed before any
@@ -573,7 +546,12 @@ flags, as shown in the table below.
 
 ### Motion Estimation Process
 
-The Motion Estimation (ME) process performs motion estimation.  This process has access to the current input picture as well as to the input pictures the current picture uses as references according to the prediction structure pattern. The Motion Estimation process is multithreaded, so pictures can be processed out of order as long as all inputs are available. More details are available in the motion estimation appendix.
+The Motion Estimation (ME) process performs motion estimation. This process has
+access to the current input picture as well as to the input pictures the
+current picture uses as references according to the prediction structure
+pattern. The Motion Estimation process is multithreaded, so pictures can be
+processed out of order as long as all inputs are available. More details are
+available in the motion estimation appendix.
 
 ### Initial Rate Control Process
 
@@ -593,7 +571,9 @@ in the Initial Rate Control process is illustrated in Figure 9.
 ### Source-based Operations Process
 
 Source-based operations process involves several analysis algorithms to
-identify spatiotemporal characteristics of the input pictures. Additional analysis is performed using the Temporal Dependency Model algorithm discussed in the TPL appendix.
+identify spatiotemporal characteristics of the input pictures. Additional
+analysis is performed using the Temporal Dependency Model algorithm discussed
+in the TPL appendix.
 
 ### Picture Manager Process
 
@@ -639,18 +619,28 @@ Picture into the pipeline.
 
 ### Rate Control Process
 
-The Rate Control process uses the distortion and image statistics
-generated in previous processes, the current picture’s bit budget, and
-previous picture statistics to set the QP and the bit budget for each
-picture. The encoder currently supports VBR -type of rate control. Details of the rate control algorithm are discussed in the rate control appendix.
+The Rate Control process uses the distortion and image statistics generated in
+previous processes, the current picture’s bit budget, and previous picture
+statistics to set the QP and the bit budget for each picture. The encoder
+currently supports VBR -type of rate control. Details of the rate control
+algorithm are discussed in the rate control appendix.
 
 ### Mode Decision Configuration Process
 
-The Mode Decision Configuration Process operates at the picture-level, and involves several initialization steps, such as setting flags for some features (e.g. OBMC, warped motion, etc.). Examples of the initializations include initializations for picture chroma QP offsets, CDEF strength, self-guided restoration filter parameters, quantization parameters, lambda arrays, and syntax, mv and coefficient rate estimation arrays.
+The Mode Decision Configuration Process operates at the picture-level, and
+involves several initialization steps, such as setting flags for some features
+(e.g. OBMC, warped motion, etc.). Examples of the initializations include
+initializations for picture chroma QP offsets, CDEF strength, self-guided
+restoration filter parameters, quantization parameters, lambda arrays, and
+syntax, mv and coefficient rate estimation arrays.
 
 ### Mode Decision
 
-The mode decision (MD) process involves selecting the partitioning and coding modes for each SB in the picture.  The process acts on each SB and produces AV1 conformant reconstructed samples for the picture, as well as all mode information used for coding each block. More details on the Mode Decision process are included in the mode decision appendix.
+The mode decision (MD) process involves selecting the partitioning and coding
+modes for each SB in the picture. The process acts on each SB and produces AV1
+conformant reconstructed samples for the picture, as well as all mode
+information used for coding each block. More details on the Mode Decision
+process are included in the mode decision appendix.
 
 ### Deblocking Loop Filter Process
 
@@ -662,7 +652,7 @@ all horizontal edges.
 
 The steps involved in the deblocking filter are as follows:
 
-1.  Determine the loopfilter level and sharpness. Both are frame level parameters.
+1. Determine the loopfilter level and sharpness. Both are frame level parameters.
     * The level takes value in \[0, 63\] and can be set using different methods:
 
       * 0 to disable filtering,
@@ -673,17 +663,17 @@ The steps involved in the deblocking filter are as follows:
 
     * The sharpness takes value in \[0, 7\]. For keyframes, sharpness=0, else sharpness is set to the input sharpness setting.
 
-2.  Identify edges to filter.
+2. Identify edges to filter.
 
-3.  Determine adaptive filter strength parameters: lvl, limit, blimit
+3. Determine adaptive filter strength parameters: lvl, limit, blimit
     and thresh. These are block level properties. They build on the
     frame level settings and include refinements based on segmentation,
     coding mode, reference picture and loop filter data.
 
-4.  Determine filter masks: High edge variance mask (hevMask),
+4. Determine filter masks: High edge variance mask (hevMask),
     fiterMask, flatMask and flatMask2.
 
-5.  Select and apply filters.
+5. Select and apply filters.
 
 A more detailed description of the deblocking loop filter is presented in the Appendix.
 
@@ -698,7 +688,10 @@ The filtering is applied on an 8x8 block level.
 
 The filtering algorithm involves the following steps:
 
-  1. Identify the direction of the block (i.e. direction of edges). Eight directions (0 to 7) could be identified. The search is performed on an 8x8 block basis. The search is performed for the luma component and the direction is assumed to be the same for the chroma components.
+  1. Identify the direction of the block (i.e. direction of edges). Eight
+     directions (0 to 7) could be identified. The search is performed on an 8x8
+     block basis. The search is performed for the luma component and the
+     direction is assumed to be the same for the chroma components.
 
   2. Apply a nonlinear filter along the edge in the identified direction.
       * Primary filtering: Filter taps are aligned in the direction of the block. The main goal is to address ringing artifacts.
@@ -748,7 +741,8 @@ picture-decoding order.
 
 ## Detailed Feature Implementation Design Appendices
 
-The following appendices highlight the design and implementation of features in much greater detail than this document.
+The following appendices highlight the design and implementation of features in
+much greater detail than this document.
 
 - [Adaptive Prediction Structure Appendix](Appendix-Adaptive-Prediction-Structure.md)
 - [Altref and Overlay Pictures Appendix](Appendix-Alt-Refs.md)
@@ -773,8 +767,12 @@ The following appendices highlight the design and implementation of features in 
 - [Super-resolution Appendix](Appendix-Super-Resolution.md)
 - [Temporal Dependency Model](Appendix-TPL.md)
 - [Transform Search Appendix](Appendix-TX-Search.md)
+- [Reference Scaling Appendix](Appendix-Reference-Scaling.md)
 
 
 ## Notes
 
-The information in this document was compiled at <mark>v0.9.0</mark> may not reflect the latest status of the encoder design. For the most up-to-date settings and implementation, it's recommended to visit the section of the code implementing the feature / section in question.
+The information in this document was compiled at <mark>v1.3.0</mark> may not
+reflect the latest status of the encoder design. For the most up-to-date
+settings and implementation, it's recommended to visit the section of the code
+implementing the feature / section in question.

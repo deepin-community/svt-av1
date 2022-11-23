@@ -40,73 +40,42 @@ struct ModeDecisionContext;
     * Mode Decision Candidate
     **************************************/
 typedef struct ModeDecisionCandidate {
-    uint8_t         intra_luma_mode; // HEVC mode, use pred_mode for AV1
-    int16_t         motion_vector_xl0;
-    int16_t         motion_vector_yl0;
-    int16_t         motion_vector_xl1;
-    int16_t         motion_vector_yl1;
-    uint8_t         skip_flag;
-    EbBool          skip_mode_allowed;
-    uint16_t        count_non_zero_coeffs;
-    uint8_t         type;
-    PaletteInfo    *palette_info;
-    uint8_t         palette_size[2];
-    uint64_t        fast_luma_rate;
-    uint64_t        fast_chroma_rate;
-    uint64_t        total_rate;
-    uint32_t        luma_fast_distortion;
-    uint64_t        full_distortion;
-    EbPtr           prediction_context_ptr;
-    EbPredDirection prediction_direction
-        [MAX_NUM_OF_PU_PER_CU]; // 2 bits // Hsan: does not seem to be used why not removed ?
-
-    int16_t motion_vector_pred_x
-        [MAX_NUM_OF_REF_PIC_LIST]; // 16 bits // Hsan: does not seem to be used why not removed ?
-    int16_t motion_vector_pred_y
-        [MAX_NUM_OF_REF_PIC_LIST]; // 16 bits // Hsan: does not seem to be used why not removed ?
-    uint8_t  block_has_coeff; // ?? bit - determine empirically
-    uint8_t  u_has_coeff; // ?? bit
-    uint8_t  v_has_coeff; // ?? bit
-    uint16_t y_has_coeff; // Issue, should be less than 32
-
-    PredictionMode pred_mode; // AV1 mode, no need to convert
-    uint8_t        drl_index;
-    uint8_t        use_intrabc;
-    // Intra Mode
-    int32_t  angle_delta[PLANE_TYPES];
-    EbBool   is_directional_mode_flag;
-    EbBool   is_directional_chroma_mode_flag;
-    uint8_t  filter_intra_mode;
-    uint32_t intra_chroma_mode; // AV1 mode, no need to convert
-
-    // Index of the alpha Cb and alpha Cr combination
-    int32_t cfl_alpha_idx;
-    // Joint sign of alpha Cb and alpha Cr
-    int32_t cfl_alpha_signs;
-
-    // Inter Mode
-    EbBool                 is_compound;
-    uint8_t                ref_frame_type;
-    TxType                 transform_type[MAX_TXB_COUNT];
-    TxType                 transform_type_uv;
-    MacroblockPlane        candidate_plane[MAX_MB_PLANE];
-    uint16_t               eob[MAX_MB_PLANE][MAX_TXB_COUNT];
-    int32_t                quantized_dc[3][MAX_TXB_COUNT];
+    Mv                     mv[MAX_NUM_OF_REF_PIC_LIST];
+    Mv                     pred_mv[MAX_NUM_OF_REF_PIC_LIST];
+    PaletteInfo           *palette_info;
     uint32_t               interp_filters;
-    MotionMode             motion_mode;
-    uint16_t               num_proj_ref;
-    EbBool                 local_warp_valid;
     EbWarpedMotionParams   wm_params_l0;
     EbWarpedMotionParams   wm_params_l1;
-    uint8_t                tx_depth;
     InterInterCompoundData interinter_comp;
-    uint8_t                compound_idx;
-    uint8_t                comp_group_idx;
-    CandClass              cand_class;
-    InterIntraMode         interintra_mode;
-    uint8_t                is_interintra_used;
-    uint8_t                use_wedge_interintra;
-    int32_t                interintra_wedge_index; //inter_intra wedge index
+    TxType                 transform_type[MAX_TXB_COUNT];
+    TxType                 transform_type_uv;
+    uint16_t               num_proj_ref;
+    uint8_t                palette_size[2];
+
+    CandClass      cand_class;
+    PredictionMode pred_mode;
+    uint8_t skip_mode; // skip mode_info + coeff. as defined in section 6.10.10 of the av1 text
+    Bool    skip_mode_allowed;
+    uint8_t use_intrabc;
+
+    // Intra Mode
+    int8_t           angle_delta[PLANE_TYPES]; // [-3,3]
+    uint8_t          filter_intra_mode;
+    UvPredictionMode intra_chroma_mode; // INTRA only
+    uint8_t          cfl_alpha_idx; // Index of the alpha Cb and alpha Cr combination
+    uint8_t          cfl_alpha_signs; // Joint sign of alpha Cb and alpha Cr
+
+    // Inter Mode
+    uint8_t        ref_frame_type;
+    uint8_t        drl_index;
+    MotionMode     motion_mode;
+    uint8_t        tx_depth;
+    uint8_t        compound_idx;
+    uint8_t        comp_group_idx;
+    InterIntraMode interintra_mode;
+    uint8_t        is_interintra_used;
+    uint8_t        use_wedge_interintra;
+    int8_t         interintra_wedge_index;
 } ModeDecisionCandidate;
 
 /**************************************
@@ -117,29 +86,18 @@ typedef EbErrorType (*EbPredictionFunc)(uint8_t                             hbd_
                                         PictureControlSet                  *pcs_ptr,
                                         struct ModeDecisionCandidateBuffer *candidate_buffer_ptr);
 typedef uint64_t (*EbFastCostFunc)(struct ModeDecisionContext *context_ptr, BlkStruct *blk_ptr,
-                                   struct ModeDecisionCandidate *candidate_buffer, uint32_t qp,
-                                   uint64_t luma_distortion, uint64_t chroma_distortion,
-                                   uint64_t lambda, PictureControlSet *pcs_ptr,
-                                   CandidateMv *ref_mv_stack, const BlockGeom *blk_geom,
-                                   uint32_t miRow, uint32_t miCol, uint8_t enable_inter_intra,
-                                   uint32_t left_neighbor_mode, uint32_t top_neighbor_mode);
-
-typedef EbErrorType (*EB_FULL_COST_FUNC)(
-    SuperBlock *sb_ptr, BlkStruct *blk_ptr, uint32_t cu_size, uint32_t cu_size_log2,
-    struct ModeDecisionCandidateBuffer *candidate_buffer_ptr, uint32_t qp, uint64_t *y_distortion,
-    uint64_t *cb_distortion, uint64_t *cr_distortion, uint64_t lambda, uint64_t lambda_chroma,
-    uint64_t *y_coeff_bits, uint64_t *cb_coeff_bits, uint64_t *cr_coeff_bits,
-    uint32_t transform_size, uint32_t transform_chroma_size, PictureControlSet *pcs_ptr);
+                                   struct ModeDecisionCandidateBuffer *candidate_buffer,
+                                   uint32_t qp, uint64_t luma_distortion,
+                                   uint64_t chroma_distortion, uint64_t lambda,
+                                   PictureControlSet *pcs_ptr, CandidateMv *ref_mv_stack,
+                                   const BlockGeom *blk_geom, uint32_t miRow, uint32_t miCol,
+                                   uint8_t enable_inter_intra, uint32_t left_neighbor_mode,
+                                   uint32_t top_neighbor_mode);
 typedef EbErrorType (*EbAv1FullCostFunc)(
     PictureControlSet *pcs_ptr, struct ModeDecisionContext *context_ptr,
     struct ModeDecisionCandidateBuffer *candidate_buffer_ptr, BlkStruct *blk_ptr,
     uint64_t *y_distortion, uint64_t *cb_distortion, uint64_t *cr_distortion, uint64_t lambda,
     uint64_t *y_coeff_bits, uint64_t *cb_coeff_bits, uint64_t *cr_coeff_bits, BlockSize bsize);
-
-typedef EbErrorType (*EB_FULL_LUMA_COST_FUNC)(
-    BlkStruct *blk_ptr, uint32_t cu_size, uint32_t cu_size_log2,
-    struct ModeDecisionCandidateBuffer *candidate_buffer_ptr, uint64_t *y_distortion,
-    uint64_t lambda, uint64_t *y_coeff_bits, uint32_t transform_size);
 /**************************************
     * Mode Decision Candidate Buffer
     **************************************/
@@ -171,27 +129,38 @@ typedef struct ModeDecisionCandidateBuffer {
     // Costs
     uint64_t *fast_cost_ptr;
     uint64_t *full_cost_ptr;
+    uint64_t  fast_luma_rate;
+    uint64_t  fast_chroma_rate;
+    uint64_t  total_rate;
+    uint32_t  luma_fast_distortion;
+    uint32_t  full_distortion;
+    uint16_t  count_non_zero_coeffs;
+    uint16_t  eob[MAX_MB_PLANE][MAX_TXB_COUNT];
+    int32_t   quantized_dc[MAX_MB_PLANE][MAX_TXB_COUNT];
+    uint8_t   block_has_coeff;
+    uint8_t   u_has_coeff;
+    uint8_t   v_has_coeff;
+    uint16_t  y_has_coeff;
 } ModeDecisionCandidateBuffer;
 
 /**************************************
     * Extern Function Declarations
     **************************************/
 extern EbErrorType mode_decision_candidate_buffer_ctor(
-    ModeDecisionCandidateBuffer *buffer_ptr, EbBitDepthEnum max_bitdepth, uint8_t sb_size,
+    ModeDecisionCandidateBuffer *buffer_ptr, EbBitDepth max_bitdepth, uint8_t sb_size,
     uint32_t buffer_mask, EbPictureBufferDesc *temp_residual_ptr,
     EbPictureBufferDesc *temp_recon_ptr, uint64_t *fast_cost_ptr, uint64_t *full_cost_ptr);
 
 extern EbErrorType mode_decision_scratch_candidate_buffer_ctor(
-    ModeDecisionCandidateBuffer *buffer_ptr, uint8_t sb_size, EbBitDepthEnum max_bitdepth);
+    ModeDecisionCandidateBuffer *buffer_ptr, uint8_t sb_size, EbBitDepth max_bitdepth);
 
 uint32_t product_full_mode_decision_light_pd0(struct ModeDecisionContext   *context_ptr,
                                               BlkStruct                    *blk_ptr,
                                               ModeDecisionCandidateBuffer **buffer_ptr_array);
-uint32_t product_full_mode_decision_light_pd1(struct ModeDecisionContext *context_ptr,
+void     product_full_mode_decision_light_pd1(struct ModeDecisionContext *context_ptr,
                                               BlkStruct *blk_ptr, PictureControlSet *pcs,
-                                              uint32_t                      sb_addr,
-                                              ModeDecisionCandidateBuffer **buffer_ptr_array,
-                                              uint32_t                      lowest_cost_index);
+                                              uint32_t                     sb_addr,
+                                              ModeDecisionCandidateBuffer *candidate_buffer);
 uint32_t product_full_mode_decision(struct ModeDecisionContext *context_ptr, BlkStruct *blk_ptr,
                                     PictureControlSet *pcs, uint32_t sb_addr,
                                     ModeDecisionCandidateBuffer **buffer_ptr_array,
@@ -226,6 +195,7 @@ struct CodingLoopContext_s;
 uint8_t                 get_ref_frame_idx(uint8_t ref_type);
 extern MvReferenceFrame svt_get_ref_frame_type(uint8_t list, uint8_t ref_idx);
 uint8_t                 get_list_idx(uint8_t ref_type);
+int                     svt_aom_get_sad_per_bit(int qidx, EbBitDepth is_hbd);
 #ifdef __cplusplus
 }
 #endif

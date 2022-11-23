@@ -54,6 +54,11 @@ typedef struct MidPassControls {
     uint8_t ds; // use downsampled input
 } MidPassControls;
 
+typedef struct BitstreamLevel {
+    uint8_t major;
+    uint8_t minor;
+} BitstreamLevel;
+
 /************************************
      * Sequence Control Set
      ************************************/
@@ -70,7 +75,7 @@ typedef struct SequenceControlSet {
     /*!< Super block geomerty pointer */
     SbGeom *sb_geom;
     /*!< Array of superblock parameters computed at the resource coordination stage */
-    SbParams *sb_params_array;
+    B64Geom *b64_geom;
     /*!< Bitstream level */
     BitstreamLevel level[MAX_NUM_OPERATING_POINTS];
     /*!< Sequence header structure, common between the encoder and decoder */
@@ -135,44 +140,37 @@ typedef struct SequenceControlSet {
     uint8_t compound_mode;
 
     /*!< Sequence resolution parameters */
-    uint32_t          chroma_format_idc;
-    uint16_t          subsampling_x; // add chroma subsampling parameters
-    uint16_t          subsampling_y;
-    uint16_t          max_input_luma_width;
-    uint16_t          max_input_luma_height;
-    uint16_t          max_input_chroma_width;
-    uint16_t          max_input_chroma_height;
-    uint16_t          max_input_pad_bottom;
-    uint16_t          max_input_pad_right;
-    uint32_t          chroma_width;
-    uint32_t          chroma_height;
-    uint32_t          pad_right;
-    uint32_t          pad_bottom;
-    uint16_t          left_padding;
-    uint16_t          top_padding;
-    uint16_t          right_padding;
-    uint16_t          bot_padding;
-    uint32_t          frame_rate;
-    uint32_t          encoder_bit_depth;
+    uint32_t chroma_format_idc;
+    uint16_t subsampling_x; // add chroma subsampling parameters
+    uint16_t subsampling_y;
+    uint16_t max_input_luma_width; // input luma width aligned to 8, this is used during encoding
+    uint16_t max_input_luma_height; // input luma height aligned to 8, this is used during encoding
+    uint16_t max_input_chroma_width;
+    uint16_t max_input_chroma_height;
+    uint16_t max_input_pad_bottom;
+    uint16_t max_input_pad_right;
+    uint32_t chroma_width;
+    uint32_t chroma_height;
+    uint32_t pad_right;
+    uint32_t pad_bottom;
+    uint16_t left_padding;
+    uint16_t top_padding;
+    uint16_t right_padding;
+    uint16_t bot_padding;
+    uint32_t frame_rate; //stored in Q16
+    uint32_t encoder_bit_depth;
     EbInputResolution input_resolution;
 
     /*!< Super block parameters set for the stream */
-    uint8_t  sb_sz;
-    uint8_t  max_sb_depth;
-    uint16_t pic_width_in_sb;
-    uint16_t picture_height_in_sb;
+    uint8_t  b64_size;
+    uint16_t pic_width_in_b64;
+    uint16_t pic_height_in_b64;
+    uint16_t b64_total_count;
+    uint16_t sb_size;
     uint16_t sb_total_count;
-    uint16_t sb_size_pix;
-    uint16_t sb_tot_cnt;
     uint16_t max_block_cnt;
     /*!< Restoration Unit parameters set for the stream */
     int32_t rest_units_per_tile;
-    /*!< Block limits */
-    uint8_t max_blk_size;
-    uint8_t min_blk_size;
-    uint8_t max_intra_size;
-    uint8_t min_intra_size;
-
     /*!< Sub picture reagions for picture analysis */
     uint32_t picture_analysis_number_of_regions_per_width;
     uint32_t picture_analysis_number_of_regions_per_height;
@@ -236,7 +234,7 @@ typedef struct SequenceControlSet {
     uint32_t         rest_process_init_count;
     uint32_t         tpl_disp_process_init_count;
     uint32_t         total_process_init_count;
-    int32_t          lap_enabled;
+    int32_t          lap_rc;
     TWO_PASS         twopass;
     double           double_frame_rate;
     Quants           quants_bd; // follows input bit depth
@@ -252,10 +250,11 @@ typedef struct SequenceControlSet {
     TfControls       tf_params_per_type[3]; // [I_SLICE][BASE][L1]
     MrpCtrls         mrp_ctrls;
     /*!< The RC stat generation pass mode (0: The default, 1: optimized)*/
-    uint8_t         rc_stat_gen_pass_mode;
-    int             cqp_base_q_tf;
-    int             cqp_base_q;
-    uint8_t         is_short_clip; //less than 200 frames, used in VBR and set in multipass encode
+    uint8_t rc_stat_gen_pass_mode;
+    int     cqp_base_q_tf;
+    int     cqp_base_q;
+    uint8_t
+                    is_short_clip; //less than 200 frames or gop_constraint_rc is set, used in VBR and set in multipass encode
     uint8_t         passes;
     IppPassControls ipp_pass_ctrls;
     MidPassControls mid_pass_ctrls;
@@ -275,7 +274,7 @@ typedef struct SequenceControlSet {
     * 1: 16 bit pipeline.
     * Now 16bit pipeline is only enabled in filter
     * Default is 0. */
-    EbBool is_16bit_pipeline;
+    Bool is_16bit_pipeline;
 
     /* Super block size (mm-signal)
     *
@@ -290,9 +289,7 @@ typedef struct SequenceControlSet {
     /* Global motion
     *
     * Default is 1. */
-    EbBool enable_global_motion;
-    int    sg_filter_mode;
-    int    wn_filter_mode;
+    Bool enable_global_motion;
 
     /* inter intra compound
     *
@@ -321,11 +318,6 @@ typedef struct SequenceControlSet {
     *
     * Default is -1. */
     int new_nearest_comb_inject;
-
-    /* nsq table
-    *
-    * Default is -1. */
-    int nsq_table;
     /* frame end cdf update
     *
     * Default is -1. */
@@ -345,17 +337,6 @@ typedef struct SequenceControlSet {
     *
     * Default is -1. */
     int compound_level;
-
-    /* Chroma mode
-    *
-    * Level                Settings
-    * CHROMA_MODE_0  0     Full chroma search @ MD
-    * CHROMA_MODE_1  1     Fast chroma search @ MD
-    * CHROMA_MODE_2  2     Chroma blind @ MD + CFL @ EP
-    * CHROMA_MODE_3  3     Chroma blind @ MD + no CFL @ EP
-    *
-    * Default is -1 (AUTO) */
-    int set_chroma_mode;
     /* Disable chroma from luma (CFL)
     *
     * Default is -1 (auto) */
@@ -395,12 +376,6 @@ typedef struct SequenceControlSet {
     *
     * Default is - 1. */
     int pic_based_rate_est;
-
-    /* Flag to enable the use of non-swaure partitions
-    *
-    * Default is 1. */
-    EbBool ext_block_flag;
-
     /* Flag to control intraBC mode
     *  0      OFF
     *  1      slow
@@ -442,35 +417,23 @@ typedef struct SequenceControlSet {
 
     // If true, calculate and store the SB-based variance
     uint8_t calculate_variance;
-
+    // Whether to modulation lambda using TPL stats or/and ME-stats or/and the percentage of INTRA selection at reference frame(s)
+    bool stats_based_sb_lambda_modulation;
+    // Desired dimensions for an externally triggered resize
+    ResizePendingParams resize_pending_params;
 } SequenceControlSet;
-
-typedef struct EbSequenceControlSetInitData {
-    EncodeContext *encode_context_ptr;
-    int32_t        sb_size;
-} EbSequenceControlSetInitData;
-
 typedef struct EbSequenceControlSetInstance {
     EbDctor             dctor;
     EncodeContext      *encode_context_ptr;
     SequenceControlSet *scs_ptr;
-    EbHandle            config_mutex;
 } EbSequenceControlSetInstance;
 
 /**************************************
      * Extern Function Declarations
      **************************************/
-extern EbErrorType svt_sequence_control_set_creator(EbPtr *object_dbl_ptr,
-                                                    EbPtr  object_init_data_ptr);
-
-extern EbErrorType svt_sequence_control_set_ctor(SequenceControlSet *object,
-                                                 EbPtr               object_init_data_ptr);
-
-extern EbErrorType copy_sequence_control_set(SequenceControlSet *dst, SequenceControlSet *src);
-
 extern EbErrorType svt_sequence_control_set_instance_ctor(EbSequenceControlSetInstance *object_ptr);
 
-extern EbErrorType sb_params_init(SequenceControlSet *scs_ptr);
+extern EbErrorType b64_geom_init(SequenceControlSet *scs_ptr);
 
 extern EbErrorType derive_input_resolution(EbInputResolution *input_resolution,
                                            uint32_t           input_size);

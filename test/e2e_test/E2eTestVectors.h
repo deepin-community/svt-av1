@@ -62,6 +62,13 @@ const std::vector<TestVideoVector> default_test_vectors = {
                     480, 8, 0, 0, 60),
 };
 
+const std::vector<TestVideoVector> default_long_test_vectors = {
+    std::make_tuple("kirland_640_480_30.yuv", YUV_VIDEO_FILE, IMG_FMT_420, 640,
+                    480, 8, 0, 0, 1000),
+    std::make_tuple("niklas_640_480_30.yuv", YUV_VIDEO_FILE, IMG_FMT_420, 640,
+                    480, 8, 0, 0, 1000),
+};
+
 const std::vector<TestVideoVector> incomplete_sb_test_vectors = {
     std::make_tuple("park_joy_90p_8_420.y4m", Y4M_VIDEO_FILE, IMG_FMT_420, 160,
                     90, 8, 0, 0, 0),
@@ -106,11 +113,35 @@ const std::vector<TestVideoVector> dummy_444_test_vectors = {
                     8, 0, 0, 100),
 };
 
+typedef std::tuple<std::string,              /**< event name */
+                   uint32_t,                 /**< frame number */
+                   PrivDataType,             /**< event type */
+                   std::vector<std::string>> /**< parameters vector */
+    TestFrameEvent;
+
 using EncSetting = std::map<std::string, std::string>;
 typedef struct EncTestSetting {
     std::string name;    // description of the test cases
     EncSetting setting;  // pairs of encoder setting, {name, value};
     std::vector<TestVideoVector> test_vectors;
+    std::vector<TestFrameEvent> event_vector;
+
+    EncTestSetting(std::string name_str, EncSetting settings,
+                   std::vector<TestVideoVector> videos) {
+        name = name_str;
+        setting = settings;
+        test_vectors = videos;
+    }
+
+    EncTestSetting(std::string name_str, EncSetting settings,
+                   std::vector<TestVideoVector> videos,
+                   std::vector<TestFrameEvent> events) {
+        name = name_str;
+        setting = settings;
+        test_vectors = videos;
+        event_vector = events;
+    }
+
     std::string to_string(std::string& fn) const {
         std::string str = get_setting_str();
         str += "test vector: ";

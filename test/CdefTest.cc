@@ -14,10 +14,11 @@
  * @file CdefTest.cc
  *
  * @brief Unit test for cdef tools:
- * * svt_cdef_find_dir_avx2
+ * * svt_aom_cdef_find_dir_avx2
+ * * svt_aom_cdef_find_dir_dual_avx2
  * * svt_cdef_filter_block_avx2
  * * compute_cdef_dist_16bit_avx2
- * * copy_rect8_8bit_to_16bit_avx2
+ * * svt_aom_copy_rect8_8bit_to_16bit_avx2
  * * svt_search_one_dual_avx2
  *
  * @author Cidana-Wenyao
@@ -54,7 +55,7 @@ typedef void (*svt_cdef_filter_block_8xn_16_func)(
 static const svt_cdef_filter_block_8xn_16_func
     svt_cdef_filter_block_8xn_16_func_table[] = {
         svt_cdef_filter_block_8xn_16_avx2,
-#ifndef EN_AVX512_SUPPORT
+#if EN_AVX512_SUPPORT
         svt_cdef_filter_block_8xn_16_avx512
 #endif
 };
@@ -475,18 +476,147 @@ TEST_P(CDEFFindDirTest, MatchTest) {
 // structs as arguments, which makes the v256 type of the intrinsics
 // hard to support, so optimizations for this target are disabled.
 #if defined(_WIN64) || !defined(_MSC_VER) || defined(__clang__)
+INSTANTIATE_TEST_CASE_P(
+    Cdef, CDEFFindDirTest,
+    ::testing::Values(
+        make_tuple(&svt_aom_cdef_find_dir_sse4_1, &svt_aom_cdef_find_dir_c),
+        make_tuple(&svt_aom_cdef_find_dir_avx2, &svt_aom_cdef_find_dir_c)));
+#endif  // defined(_WIN64) || !defined(_MSC_VER)
 
-INSTANTIATE_TEST_CASE_P(Cdef, CDEFFindDirTest,
-                        ::testing::Values(make_tuple(&svt_cdef_find_dir_sse4_1,
-                                                     &svt_cdef_find_dir_c),
-                                          make_tuple(&svt_cdef_find_dir_avx2,
-                                                     &svt_cdef_find_dir_c)));
+using FindDirDualFunc = void (*)(const uint16_t *img1, const uint16_t *img2,
+                                 int stride, int32_t *var1, int32_t *var2,
+                                 int32_t coeff_shift, uint8_t *out1,
+                                 uint8_t *out2);
+using TestFindDirDualParam = ::testing::tuple<FindDirDualFunc, FindDirDualFunc>;
+/**
+ * @brief Unit test for svt_cdef_find_dir_dual_avx2
+ *
+ * Test strategy:
+ * Feed src data generated randomly, and check the best mse and
+ * the directional contrast from target function and reference
+ * function
+ *
+ * Expect result:
+ * The best mse and directional contrast from targeted function
+ * should be identical with the values from reference function.
+ *
+ * Test coverage:
+ * Test cases:
+ * bitdepth: 8, 10, 12
+ *
+ */
+class CDEFFindDirDualTest
+    : public ::testing::TestWithParam<TestFindDirDualParam> {
+  public:
+    CDEFFindDirDualTest() : rnd_(0, (1 << 16) - 1) {
+    }
+
+    virtual ~CDEFFindDirDualTest() {
+    }
+
+    virtual void SetUp() {
+        func_tst_ = TEST_GET_PARAM(0);
+        func_ref_ = TEST_GET_PARAM(1);
+    }
+
+    virtual void TearDown() {
+        aom_clear_system_state();
+    }
+
+    void prepare_data(int depth, int bits, int level) {
+        for (unsigned int i = 0; i < sizeof(src_) / sizeof(src_[0]); i++)
+            src_[i] = clamp((rnd_.random() & ((1 << bits) - 1)) + level,
+                            0,
+                            (1 << depth) - 1);
+        for (unsigned int i = 0; i < sizeof(src2_) / sizeof(src2_[0]); i++)
+            src2_[i] = clamp((rnd_.random() & ((1 << bits) - 1)) + level,
+                             0,
+                             (1 << depth) - 1);
+    }
+
+    void test_finddir() {
+        int depth, bits, level, count;
+        uint8_t res_ref_1 = 0, res_tst_1 = 0, res_ref_2 = 0, res_tst_2 = 0;
+        int32_t var_ref_1 = 0, var_tst_1 = 0, var_ref_2 = 0, var_tst_2 = 0;
+
+        for (depth = 8; depth <= 12; depth += 2) {
+            for (count = 0; count < 512; count++) {
+                const int shift = depth - 8;
+                for (level = 0; level < (1 << depth); level += 1 << shift) {
+                    for (bits = 1; bits <= depth; bits++) {
+                        prepare_data(depth, bits, level);
+
+                        func_ref_(src_,
+                                  src2_,
+                                  size_,
+                                  &var_ref_1,
+                                  &var_ref_2,
+                                  shift,
+                                  &res_ref_1,
+                                  &res_ref_2);
+                        func_tst_(src_,
+                                  src2_,
+                                  size_,
+                                  &var_tst_1,
+                                  &var_tst_2,
+                                  shift,
+                                  &res_tst_1,
+                                  &res_tst_2);
+                        ASSERT_EQ(res_tst_1, res_ref_1)
+                            << "Error: CDEFFindDirDualTest, SIMD and C "
+                               "mismatch."
+                            << "return " << res_tst_1 << " : " << res_ref_1
+                            << "depth: " << depth;
+                        ASSERT_EQ(res_tst_2, res_ref_2)
+                            << "Error: CDEFFindDirDualTest, SIMD and C "
+                               "mismatch."
+                            << "return " << res_tst_2 << " : " << res_ref_2
+                            << "depth: " << depth;
+                        ASSERT_EQ(var_tst_1, var_ref_1)
+                            << "Error: CDEFFindDirDualTest, SIMD and C "
+                               "mismatch."
+                            << "var: " << var_tst_1 << " : " << var_ref_1
+                            << "depth: " << depth;
+                        ASSERT_EQ(var_tst_2, var_ref_2)
+                            << "Error: CDEFFindDirDualTest, SIMD and C "
+                               "mismatch."
+                            << "var: " << var_tst_2 << " : " << var_ref_2
+                            << "depth: " << depth;
+                    }
+                }
+            }
+        }
+    }
+
+  protected:
+    FindDirDualFunc func_tst_;
+    FindDirDualFunc func_ref_;
+    SVTRandom rnd_;
+    static const int size_ = 8;
+    DECLARE_ALIGNED(16, uint16_t, src_[size_ * size_]);
+    DECLARE_ALIGNED(16, uint16_t, src2_[size_ * size_]);
+};
+
+TEST_P(CDEFFindDirDualTest, MatchTest) {
+    test_finddir();
+}
+
+// VS compiling for 32 bit targets does not support vector types in
+// structs as arguments, which makes the v256 type of the intrinsics
+// hard to support, so optimizations for this target are disabled.
+#if defined(_WIN64) || !defined(_MSC_VER) || defined(__clang__)
+INSTANTIATE_TEST_CASE_P(
+    Cdef, CDEFFindDirDualTest,
+    ::testing::Values(make_tuple(&svt_aom_cdef_find_dir_dual_sse4_1,
+                                 &svt_aom_cdef_find_dir_dual_c),
+                      make_tuple(&svt_aom_cdef_find_dir_dual_avx2,
+                                 &svt_aom_cdef_find_dir_dual_c)));
 
 #endif  // defined(_WIN64) || !defined(_MSC_VER)
 }  // namespace
 
 /**
- * @brief Unit test for copy_rect8_8bit_to_16bit_avx2
+ * @brief Unit test for svt_aom_copy_rect8_8bit_to_16bit_avx2
  *
  * Test strategy:
  * Feed src data generated randomly, and check the dst data
@@ -517,6 +647,7 @@ TEST(CdefToolTest, CopyRectMatchTest) {
         for (int vsize = 8; vsize <= 64; vsize += 8) {
             memset(dst_data_tst_, 0, sizeof(dst_data_tst_));
             memset(dst_data_ref_, 0, sizeof(dst_data_ref_));
+
             uint8_t *src_ =
                 src_data_ + CDEF_VBORDER * CDEF_BSTRIDE + CDEF_HBORDER;
             uint16_t *dst_tst_ =
@@ -524,15 +655,27 @@ TEST(CdefToolTest, CopyRectMatchTest) {
             uint16_t *dst_ref_ =
                 dst_data_ref_ + CDEF_VBORDER * CDEF_BSTRIDE + CDEF_HBORDER;
 
-            svt_copy_rect8_8bit_to_16bit_c(
+            svt_aom_copy_rect8_8bit_to_16bit_c(
                 dst_ref_, CDEF_BSTRIDE, src_, CDEF_BSTRIDE, vsize, hsize);
-            svt_copy_rect8_8bit_to_16bit_sse4_1(
+            svt_aom_copy_rect8_8bit_to_16bit_sse4_1(
                 dst_tst_, CDEF_BSTRIDE, src_, CDEF_BSTRIDE, vsize, hsize);
 
             for (int i = 0; i < vsize; ++i) {
                 for (int j = 0; j < hsize; ++j)
                     ASSERT_EQ(dst_ref_[i * CDEF_BSTRIDE + j],
-                              dst_ref_[i * CDEF_BSTRIDE + j])
+                              dst_tst_[i * CDEF_BSTRIDE + j])
+                        << "copy_rect8_8bit_to_16bit failed with pos(" << i
+                        << " " << j << ")";
+            }
+
+            // Test the AVX2 copy function
+            memset(dst_data_tst_, 0, sizeof(dst_data_tst_));
+            svt_aom_copy_rect8_8bit_to_16bit_avx2(
+                dst_tst_, CDEF_BSTRIDE, src_, CDEF_BSTRIDE, vsize, hsize);
+            for (int i = 0; i < vsize; ++i) {
+                for (int j = 0; j < hsize; ++j)
+                    ASSERT_EQ(dst_ref_[i * CDEF_BSTRIDE + j],
+                              dst_tst_[i * CDEF_BSTRIDE + j])
                         << "copy_rect8_8bit_to_16bit failed with pos(" << i
                         << " " << j << ")";
             }
@@ -606,6 +749,16 @@ TEST(CdefToolTest, ComputeCdefDistMatchTest) {
                                                                    coeff_shift,
                                                                    plane,
                                                                    subsampling);
+                        const uint64_t sse_mse =
+                            compute_cdef_dist_16bit_sse4_1(dst_data_,
+                                                           stride,
+                                                           src_data_,
+                                                           dlist,
+                                                           cdef_count,
+                                                           test_bs[i],
+                                                           coeff_shift,
+                                                           plane,
+                                                           subsampling);
                         const uint64_t avx_mse =
                             compute_cdef_dist_16bit_avx2(dst_data_,
                                                          stride,
@@ -616,6 +769,10 @@ TEST(CdefToolTest, ComputeCdefDistMatchTest) {
                                                          coeff_shift,
                                                          plane,
                                                          subsampling);
+                        ASSERT_EQ(c_mse, sse_mse)
+                            << "compute_cdef_dist_16bit_sse4_1 failed "
+                            << "bitdepth: " << bd << " plane: " << plane
+                            << " BlockSize " << test_bs[i] << " loop: " << k;
                         ASSERT_EQ(c_mse, avx_mse)
                             << "compute_cdef_dist_16bit_avx2 failed "
                             << "bitdepth: " << bd << " plane: " << plane
@@ -677,6 +834,16 @@ TEST(CdefToolTest, ComputeCdefDist8bitMatchTest) {
                                                      coeff_shift,
                                                      plane,
                                                      subsampling);
+                        const uint64_t sse_mse =
+                            compute_cdef_dist_8bit_sse4_1(dst_data_,
+                                                          stride,
+                                                          src_data_,
+                                                          dlist,
+                                                          cdef_count,
+                                                          test_bs[i],
+                                                          coeff_shift,
+                                                          plane,
+                                                          subsampling);
                         const uint64_t avx_mse =
                             compute_cdef_dist_8bit_avx2(dst_data_,
                                                         stride,
@@ -687,6 +854,10 @@ TEST(CdefToolTest, ComputeCdefDist8bitMatchTest) {
                                                         coeff_shift,
                                                         plane,
                                                         subsampling);
+                        ASSERT_EQ(c_mse, sse_mse)
+                            << "compute_cdef_dist_8bit_sse4_1 failed "
+                            << "bitdepth: " << bd << " plane: " << plane
+                            << " BlockSize " << test_bs[i] << " loop: " << k;
                         ASSERT_EQ(c_mse, avx_mse)
                             << "compute_cdef_dist_8bit_avx2 failed "
                             << "bitdepth: " << bd << " plane: " << plane

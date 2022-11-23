@@ -90,7 +90,7 @@ EbErrorType initial_rate_control_context_ctor(EbThreadContext   *thread_context_
     return EB_ErrorNone;
 }
 
-void svt_av1_build_quantizer(AomBitDepth bit_depth, int32_t y_dc_delta_q, int32_t u_dc_delta_q,
+void svt_av1_build_quantizer(EbBitDepth bit_depth, int32_t y_dc_delta_q, int32_t u_dc_delta_q,
                              int32_t u_ac_delta_q, int32_t v_dc_delta_q, int32_t v_ac_delta_q,
                              Quants *const quants, Dequants *const deq);
 
@@ -144,7 +144,7 @@ void push_to_lad_queue(PictureParentControlSet *pcs, InitialRateControlContext *
 
 /* send picture out from irc process */
 void irc_send_picture_out(InitialRateControlContext *ctx, PictureParentControlSet *pcs,
-                          EbBool superres_recode) {
+                          Bool superres_recode) {
     EbObjectWrapper *out_results_wrapper_ptr;
     // Get Empty Results Object
     svt_get_empty_object(ctx->initialrate_control_results_output_fifo_ptr,
@@ -164,63 +164,23 @@ uint8_t is_frame_already_exists(PictureParentControlSet *pcs, uint32_t end_index
     return 0;
 }
 
-/* decide to inject a frame into the tpl group*/
-uint8_t inj_to_tpl_group(PictureParentControlSet *pcs) {
-    uint8_t inj = 0;
-    if (pcs->hierarchical_levels != 4) {
-        if (pcs->temporal_layer_index < pcs->hierarchical_levels)
-            inj = 1;
-        else
-            inj = 0;
-    } else {
-        if (pcs->scs_ptr->mrp_ctrls.referencing_scheme == 1) {
-            if (pcs->temporal_layer_index < 4)
-                inj = 1;
-            else if (
-                pcs->is_used_as_reference_flag &&
-                (pcs->pic_index == 6 ||
-                 pcs->pic_index ==
-                     10)) //TODO: could be removed once TPL r0 adapts dyncamically  to TPL group size
-                inj = 1;
-            else
-                inj = 0;
-
-        } else {
-            if (pcs->temporal_layer_index < 4)
-                inj = 1;
-            else if (pcs->is_used_as_reference_flag && (pcs->pic_index == 0 || pcs->pic_index == 8))
-                inj = 1;
-            else
-                inj = 0;
-        }
-    }
-
-    return inj;
-}
-
 // validate pictures that will be used by the tpl algorithm based on tpl opts
 void validate_pic_for_tpl(PictureParentControlSet *pcs, uint32_t pic_index) {
     // Check wether the i-th pic already exists in the tpl group
-    if (!is_frame_already_exists(pcs, pic_index, pcs->tpl_group[pic_index]->picture_number)) {
-        // Discard non-ref pic from the tpl group
-        uint8_t inject_frame = inj_to_tpl_group(pcs->tpl_group[pic_index]);
-        if (inject_frame) {
-            if (pcs->slice_type != I_SLICE) {
-                // Discard low important pictures from tpl group
-                if (pcs->tpl_ctrls.tpl_opt_flag && (pcs->tpl_ctrls.reduced_tpl_group >= 0)) {
-                    if (pcs->tpl_group[pic_index]->temporal_layer_index <=
-                        pcs->tpl_ctrls.reduced_tpl_group) {
-                        pcs->tpl_valid_pic[pic_index] = 1;
-                        pcs->used_tpl_frame_num++;
-                    }
-                } else {
-                    pcs->tpl_valid_pic[pic_index] = 1;
-                    pcs->used_tpl_frame_num++;
-                }
-            } else {
+    if (!is_frame_already_exists(pcs, pic_index, pcs->tpl_group[pic_index]->picture_number) &&
+        // In the middle pass when rc_stat_gen_pass_mode is set, pictures in the highest temporal layer are skipped,
+        // except the first one. The condition is added to prevent validating these frames for tpl
+        !is_pic_skipped(pcs->tpl_group[pic_index])) {
+        // Discard low important pictures from tpl group
+        if (pcs->tpl_ctrls.reduced_tpl_group >= 0) {
+            if (pcs->tpl_group[pic_index]->temporal_layer_index <=
+                pcs->tpl_ctrls.reduced_tpl_group) {
                 pcs->tpl_valid_pic[pic_index] = 1;
                 pcs->used_tpl_frame_num++;
             }
+        } else {
+            pcs->tpl_valid_pic[pic_index] = 1;
+            pcs->used_tpl_frame_num++;
         }
     }
 }
@@ -360,7 +320,7 @@ void process_lad_queue(InitialRateControlContext *ctx, uint8_t pass_thru) {
                                 (uint8_t)(tmp_pcs->ext_mg_id - head_pcs->ext_mg_id +
                                           1)); //+1: to include the MG where the head belongs
                         if (tmp_pcs->end_of_sequence_flag)
-                            head_pcs->end_of_sequence_region = EB_TRUE;
+                            head_pcs->end_of_sequence_region = TRUE;
                         if (tmp_pcs->ext_mg_id >= cur_mg) {
                             if (tmp_pcs->ext_mg_id > cur_mg)
                                 assert_err(tmp_pcs->ext_mg_id == cur_mg + 1,
@@ -397,19 +357,20 @@ void process_lad_queue(InitialRateControlContext *ctx, uint8_t pass_thru) {
         if (send_out) {
             if (head_pcs->scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
                 head_pcs->scs_ptr->static_config.pass == ENC_LAST_PASS ||
-                head_pcs->scs_ptr->lap_enabled) {
-                head_pcs->stats_in_offset     = head_pcs->decode_order;
+                head_pcs->scs_ptr->lap_rc) {
+                head_pcs->stats_in_offset = head_pcs->decode_order;
+                svt_block_on_mutex(head_pcs->scs_ptr->twopass.stats_buf_ctx->stats_in_write_mutex);
                 head_pcs->stats_in_end_offset = head_pcs->ext_group_size &&
-                        !(head_pcs->scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-                          head_pcs->scs_ptr->static_config.pass == ENC_LAST_PASS)
+                        head_pcs->scs_ptr->lap_rc
                     ? MIN((uint64_t)(head_pcs->scs_ptr->twopass.stats_buf_ctx->stats_in_end_write -
                                      head_pcs->scs_ptr->twopass.stats_buf_ctx->stats_in_start),
-                          head_pcs->stats_in_offset + (uint64_t)head_pcs->ext_group_size + 1)
+                          head_pcs->stats_in_offset + (uint64_t)head_pcs->ext_group_size)
                     : (uint64_t)(head_pcs->scs_ptr->twopass.stats_buf_ctx->stats_in_end_write -
                                  head_pcs->scs_ptr->twopass.stats_buf_ctx->stats_in_start);
-                head_pcs->frames_in_sw        = (int)(head_pcs->stats_in_end_offset -
+                svt_release_mutex(head_pcs->scs_ptr->twopass.stats_buf_ctx->stats_in_write_mutex);
+                head_pcs->frames_in_sw = (int)(head_pcs->stats_in_end_offset -
                                                head_pcs->stats_in_offset);
-                if (head_pcs->scs_ptr->enable_dec_order == 0 && head_pcs->scs_ptr->lap_enabled &&
+                if (head_pcs->scs_ptr->enable_dec_order == 0 && head_pcs->scs_ptr->lap_rc &&
                     head_pcs->temporal_layer_index == 0) {
                     for (uint64_t num_frames = head_pcs->stats_in_offset;
                          num_frames < head_pcs->stats_in_end_offset;
@@ -427,7 +388,7 @@ void process_lad_queue(InitialRateControlContext *ctx, uint8_t pass_thru) {
                 }
             }
             //take the picture out from iRc process
-            irc_send_picture_out(ctx, head_pcs, EB_FALSE);
+            irc_send_picture_out(ctx, head_pcs, FALSE);
             //advance the head
             head_entry->pcs = NULL;
             queue->head     = OUT_Q_ADVANCE(queue->head);
@@ -487,9 +448,7 @@ void *initial_rate_control_kernel(void *input_ptr) {
 
         // If the picture is complete, proceed
         if (pcs_ptr->me_segments_completion_count == pcs_ptr->me_segments_total_count) {
-            SequenceControlSet *scs_ptr = (SequenceControlSet *)
-                                              pcs_ptr->scs_wrapper_ptr->object_ptr;
-
+            SequenceControlSet *scs_ptr = pcs_ptr->scs_ptr;
             if (in_results_ptr->task_type == TASK_SUPERRES_RE_ME) {
                 // do necessary steps as normal routine
                 {
@@ -518,45 +477,30 @@ void *initial_rate_control_kernel(void *input_ptr) {
                     /*In case Look-Ahead is zero there is no need to place pictures in the
                       re-order queue. this will cause an artificial delay since pictures come in dec-order*/
                     pcs_ptr->frames_in_sw           = 0;
-                    pcs_ptr->end_of_sequence_region = EB_FALSE;
+                    pcs_ptr->end_of_sequence_region = FALSE;
                 }
 
                 // post to downstream process
-                irc_send_picture_out(context_ptr, pcs_ptr, EB_TRUE);
+                irc_send_picture_out(context_ptr, pcs_ptr, TRUE);
 
                 // Release the Input Results
                 svt_release_object(in_results_wrapper_ptr);
                 continue;
             }
-
+            // The quant/dequant params derivation is performaed 1 time per sequence assuming the qindex offset(s) are 0
+            // then adjusted per TU prior of the quantization at av1_quantize_inv_quantize() depending on the qindex offset(s)
             if (pcs_ptr->picture_number == 0) {
                 Quants *const   quants_8bit = &scs_ptr->quants_8bit;
                 Dequants *const deq_8bit    = &scs_ptr->deq_8bit;
-                svt_av1_build_quantizer(
-                    AOM_BITS_8,
-                    pcs_ptr->frm_hdr.quantization_params.delta_q_dc[AOM_PLANE_Y],
-                    pcs_ptr->frm_hdr.quantization_params.delta_q_dc[AOM_PLANE_U],
-                    pcs_ptr->frm_hdr.quantization_params.delta_q_ac[AOM_PLANE_U],
-                    pcs_ptr->frm_hdr.quantization_params.delta_q_dc[AOM_PLANE_V],
-                    pcs_ptr->frm_hdr.quantization_params.delta_q_ac[AOM_PLANE_V],
-                    quants_8bit,
-                    deq_8bit);
+                svt_av1_build_quantizer(EB_EIGHT_BIT, 0, 0, 0, 0, 0, quants_8bit, deq_8bit);
 
-                if (scs_ptr->static_config.encoder_bit_depth == AOM_BITS_10) {
+                if (scs_ptr->static_config.encoder_bit_depth == EB_TEN_BIT) {
                     Quants *const   quants_bd = &scs_ptr->quants_bd;
                     Dequants *const deq_bd    = &scs_ptr->deq_bd;
-                    svt_av1_build_quantizer(
-                        AOM_BITS_10,
-                        pcs_ptr->frm_hdr.quantization_params.delta_q_dc[AOM_PLANE_Y],
-                        pcs_ptr->frm_hdr.quantization_params.delta_q_dc[AOM_PLANE_U],
-                        pcs_ptr->frm_hdr.quantization_params.delta_q_ac[AOM_PLANE_U],
-                        pcs_ptr->frm_hdr.quantization_params.delta_q_dc[AOM_PLANE_V],
-                        pcs_ptr->frm_hdr.quantization_params.delta_q_ac[AOM_PLANE_V],
-                        quants_bd,
-                        deq_bd);
+                    svt_av1_build_quantizer(EB_TEN_BIT, 0, 0, 0, 0, 0, quants_bd, deq_bd);
                 }
             }
-            // perform tpl_la on unscaled frames only
+            // tpl_la can be performed on unscaled frames in super-res q-threshold and auto mode
             if (pcs_ptr->tpl_ctrls.enable && !pcs_ptr->frame_superres_enabled) {
                 svt_set_cond_var(&pcs_ptr->me_ready, 1);
             }
@@ -573,12 +517,13 @@ void *initial_rate_control_kernel(void *input_ptr) {
             /*In case Look-Ahead is zero there is no need to place pictures in the
               re-order queue. this will cause an artificial delay since pictures come in dec-order*/
             pcs_ptr->frames_in_sw           = 0;
-            pcs_ptr->end_of_sequence_region = EB_FALSE;
+            pcs_ptr->end_of_sequence_region = FALSE;
 
             push_to_lad_queue(pcs_ptr, context_ptr);
 #if LAD_MG_PRINT
             print_lad_queue(context_ptr, 0);
 #endif
+            // tpl_la can be performed on unscaled frame when in super-res q-threshold and auto mode
             uint8_t lad_queue_pass_thru = !(pcs_ptr->tpl_ctrls.enable &&
                                             !pcs_ptr->frame_superres_enabled);
             process_lad_queue(context_ptr, lad_queue_pass_thru);

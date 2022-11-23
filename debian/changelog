@@ -1,5 +1,68 @@
-svt-av1 (0.9.1.1-deepin) stable; urgency=medium
+svt-av1 (1.3.0+dfsg-1) unstable; urgency=medium
 
-  * ['Rebuild  against by  current gcc 11.2']
+  [ Dylan Aïssi ]
+  * New upstream release
 
- -- Deepin Packages Builder <packages@deepin.org>  Thu, 11 Aug 2022 16:23:59 +0800
+  [ John Paul Adrian Glaubitz ]
+  * Build with -DCOMPILE_C_ONLY=ON on x32 (Closes: #1020631)
+
+  [ Debian Janitor ]
+  * Set upstream metadata fields: Bug-Database, Bug-Submit, Repository-Browse.
+  * Set upstream metadata fields: Repository.
+
+ -- Dylan Aïssi <daissi@debian.org>  Sat, 19 Nov 2022 14:49:32 +0100
+
+svt-av1 (1.2.1+dfsg-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Dylan Aïssi <daissi@debian.org>  Fri, 26 Aug 2022 14:50:39 +0200
+
+svt-av1 (1.2.0+dfsg-2) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Dylan Aïssi <daissi@debian.org>  Thu, 04 Aug 2022 14:25:54 +0200
+
+svt-av1 (1.2.0+dfsg-1) experimental; urgency=medium
+
+  * New upstream release
+  * Standards-Version: 4.6.1 (no changes needed)
+
+ -- Dylan Aïssi <daissi@debian.org>  Wed, 03 Aug 2022 22:16:24 +0200
+
+svt-av1 (1.1.0+dfsg-1) experimental; urgency=medium
+
+  * New upstream release (Closes: #1015304)
+  * Bump SONAME to libsvtav1enc1
+  * Improve package description of libsvtav1-dev (Closes: #1015257)
+  * Update debian/copyright
+
+ -- Dylan Aïssi <daissi@debian.org>  Thu, 28 Jul 2022 22:46:56 +0200
+
+svt-av1 (0.9.1+dfsg-1) unstable; urgency=medium
+
+  * New upstream release
+  * Fix build on i386 by compiling only C code with no simds (Closes: #1004073)
+  * Add missing license in d/copyright
+
+ -- Dylan Aïssi <daissi@debian.org>  Fri, 04 Mar 2022 15:01:26 +0100
+
+svt-av1 (0.9.0+dfsg-1) unstable; urgency=medium
+
+  * New upstream release
+  * License has changed from BSD-2-Clause to BSD-3-Clause-Clear
+
+ -- Dylan Aïssi <daissi@debian.org>  Fri, 11 Feb 2022 21:34:35 +0100
+
+svt-av1 (0.8.7+dfsg-2) unstable; urgency=medium
+
+  * Standards-Version: 4.6.0 (no changes needed)
+
+ -- Dylan Aïssi <daissi@debian.org>  Tue, 18 Jan 2022 11:43:57 +0100
+
+svt-av1 (0.8.7+dfsg-1) unstable; urgency=medium
+
+  * Initial Debian release. (Closes: #993237)
+
+ -- Dylan Aïssi <daissi@debian.org>  Sun, 29 Aug 2021 09:57:49 +0200

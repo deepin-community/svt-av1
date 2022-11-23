@@ -222,12 +222,39 @@ static const std::vector<EncTestSetting> default_enc_settings = {
 #endif // ENBALE_16BIT_PIPELINE_TEST
     {"SuperResTest5", {{"SuperresMode", "4"}}, default_test_vectors},
 
+    // test Reference Scaling mode
+    { "RefScalingTest1", {{"ResizeMode", "2"}}, default_test_vectors },
+    // reference scaling tests with OBMC
+    { "RefScalingTest2", {{"ResizeMode", "2"}, {"Obmc", "0"}, {"EncoderMode", "8"}}, default_test_vectors },
+    { "RefScalingTest3", {{"ResizeMode", "2"}, {"Obmc", "1"}, {"EncoderMode", "8"}}, default_test_vectors },
+#ifdef ENBALE_16BIT_PIPELINE_TEST
+    { "RefScalingTest4", {{"ResizeMode", "2"}, {"Obmc", "1"}, {"Encoder16BitPipeline", "1"}}, default_test_vectors },
+#endif // ENBALE_16BIT_PIPELINE_TEST
+    { "RefScalingTest5", {{"ResizeMode", "2"}, {"ScreenContentMode", "1"}, {"EncoderMode", "8"}}, screen_test_vectors },
+    { "RefScalingTest6", {{"ResizeMode", "2"}, {"ScreenContentMode", "2"}, {"EncoderMode", "8"}}, screen_test_vectors },
+    // reference scaling tests with loop restoration
+    { "RefScalingTest7", {{"ResizeMode", "2"}, {"EnableRestoration", "1"}, {"EncoderMode", "8"}}, default_test_vectors },
+    // reference scaling tests for dynamic mode
+    { "RefScalingTest8", {{"ResizeMode", "3"}, {"RateControlMode", "2"}, {"PredStructure", "1"}, {"TargetBitRate", "100"}, {"EncoderMode", "8"}}, default_long_test_vectors },
+    { "RefScalingTest9", {{"ResizeMode", "3"}, {"RateControlMode", "2"}, {"PredStructure", "1"}, {"TargetBitRate", "50"}, {"EncoderMode", "8"}}, default_long_test_vectors },
+    { "RefScalingTest10", {{"ResizeMode", "3"}, {"RateControlMode", "2"}, {"PredStructure", "1"}, {"TargetBitRate", "20"}, {"EncoderMode", "8"}}, default_long_test_vectors },
+    { "RefScalingTest11", {{"ResizeMode", "3"}, {"RateControlMode", "2"}, {"PredStructure", "1"}, {"TargetBitRate", "15"}, {"EncoderMode", "8"}}, default_long_test_vectors },
+
+    // reference scaling tests with super resolution
+    { "SuperResRefScalingTest0", {{"SuperresMode", "2"}, {"ResizeMode", "2"}, {"EncoderMode", "8"}}, default_test_vectors },
+
     // test by using a dummy source of color bar
     {"DummySrcTest1", {{"EncoderMode", "8"}}, dummy_test_vectors},
 
     // only 420 input is supported
     //{"DummySrcTest2", {{"EncoderMode", "8"}, {"Profile", "2"}}, dummy_422_test_vectors},
     //{"DummySrcTest3", {{"EncoderMode", "8"}, {"Profile", "1"}}, dummy_444_test_vectors},
+
+    // test QM
+    {"QMTest1", {{"EnableQM", "0"}}, default_test_vectors},
+    {"QMTest2", {{"EnableQM", "1"}}, default_test_vectors},
+    {"QMTest3", {{"EnableQM", "1"}, {"MinQmLevel", "0"}, {"MaxQmLevel", "15"}}, default_test_vectors},
+    {"QMTest4", {{"EnableQM", "1"}, {"MinQmLevel", "15"}, {"MaxQmLevel", "15"}}, default_test_vectors},
 };
 
 static const std::vector<EncTestSetting> overlay_preset_settings = {
@@ -261,6 +288,58 @@ static const std::vector<EncTestSetting> superres_preset_settings = {
     {"SuperResPresetTest11",{{"EncoderMode", "10"},{"SuperresMode", "2"}}, default_test_vectors},
     {"SuperResPresetTest12",{{"EncoderMode", "11"},{"SuperresMode", "2"}}, default_test_vectors},
     {"SuperResPresetTest13",{{"EncoderMode", "12"},{"SuperresMode", "2"}}, default_test_vectors},
+};
+
+static const std::vector<EncTestSetting> sframe_settings = {
+    {"SframeTest1", {{"EncoderMode", "8"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest2", {{"EncoderMode", "8"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest3", {{"EncoderMode", "8"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest4", {{"EncoderMode", "8"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest5", {{"EncoderMode", "8"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest6", {{"EncoderMode", "8"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest7", {{"EncoderMode", "8"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest8", {{"EncoderMode", "8"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest9", {{"EncoderMode", "8"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+
+    {"SframeTest10", {{"EncoderMode", "9"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest11", {{"EncoderMode", "9"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest12", {{"EncoderMode", "9"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest13", {{"EncoderMode", "9"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest14", {{"EncoderMode", "9"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest15", {{"EncoderMode", "9"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest16", {{"EncoderMode", "9"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest17", {{"EncoderMode", "9"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest18", {{"EncoderMode", "9"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+
+    {"SframeTest19", {{"EncoderMode", "10"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest20", {{"EncoderMode", "10"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest21", {{"EncoderMode", "10"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest22", {{"EncoderMode", "10"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest23", {{"EncoderMode", "10"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest24", {{"EncoderMode", "10"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest25", {{"EncoderMode", "10"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest26", {{"EncoderMode", "10"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest27", {{"EncoderMode", "10"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+
+    {"SframeTest28", {{"EncoderMode", "11"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest29", {{"EncoderMode", "11"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest30", {{"EncoderMode", "11"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest31", {{"EncoderMode", "11"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest32", {{"EncoderMode", "11"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest33", {{"EncoderMode", "11"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest34", {{"EncoderMode", "11"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest35", {{"EncoderMode", "11"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest36", {{"EncoderMode", "11"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+
+    {"SframeTest37", {{"EncoderMode", "12"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest38", {{"EncoderMode", "12"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest39", {{"EncoderMode", "12"}, {"SframeInterval", "16"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest40", {{"EncoderMode", "12"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest41", {{"EncoderMode", "12"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest42", {{"EncoderMode", "12"}, {"SframeInterval", "32"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest43", {{"EncoderMode", "12"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "3"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest44", {{"EncoderMode", "12"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "4"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
+    {"SframeTest45", {{"EncoderMode", "12"}, {"SframeInterval", "64"}, {"SframeMode", "2"},  {"PredStructure", "1"}, {"HierarchicalLevels", "5"}, {"ForcedMaximumFrameWidth", "1920"}, {"ForcedMaximumFrameHeight", "1080"}}, default_test_vectors},
 };
 
 /* clang-format on */
@@ -320,6 +399,16 @@ TEST_P(SuperResPresetConformanceTest, DISABLED_SupreResPresetTest) {
 
 INSTANTIATE_TEST_CASE_P(SvtAv1, SuperResPresetConformanceTest,
                         ::testing::ValuesIn(superres_preset_settings),
+                        EncTestSetting::GetSettingName);
+
+class SwitchFrameConformanceTest : public ConformanceDeathTest {};
+
+TEST_P(SwitchFrameConformanceTest, DISABLED_SwitchFrameTest) {
+    run_death_test();
+}
+
+INSTANTIATE_TEST_CASE_P(SvtAv1, SwitchFrameConformanceTest,
+                        ::testing::ValuesIn(sframe_settings),
                         EncTestSetting::GetSettingName);
 
 class LongtimeConformanceTest : public ConformanceDeathTest {};
@@ -416,12 +505,10 @@ static const std::vector<EncTestSetting> generate_super_res_settings() {
     // 8-bit test cases
     for (size_t i = 8; i <= 16; i++) {
         for (size_t j = 8; j <= 16; j++) {
-            EncTestSetting new_setting;
             string idx = std::to_string(count);
             string name = test_prefix + idx;
             EncTestSetting setting{name,
                                    {{"SuperresMode", "1"},
-                                    {"Restoration Filter", "1"},
                                     {"SuperresDenom", std::to_string(i)},
                                     {"SuperresKfDenom", std::to_string(j)}},
                                    default_test_vectors};
@@ -433,12 +520,10 @@ static const std::vector<EncTestSetting> generate_super_res_settings() {
     // 16-bit test cases
     for (size_t i = 8; i <= 16; i++) {
         for (size_t j = 8; j <= 16; j++) {
-            EncTestSetting new_setting;
             string idx = std::to_string(count);
             string name = test_prefix + idx;
             EncTestSetting setting{name,
                                    {{"SuperresMode", "1"},
-                                    {"Restoration Filter", "1"},
                                     {"SuperresDenom", std::to_string(i)},
                                     {"SuperresKfDenom", std::to_string(j)},
                                     {"Encoder16BitPipeline", "1"}},
@@ -476,7 +561,6 @@ generate_super_res_q_threshold_settings() {
 
     int count = 0;
     for (auto q_threshold : q_thresholds) {
-        EncTestSetting new_setting;
         string idx = std::to_string(count);
         string name = test_prefix + idx;
         EncTestSetting setting{
@@ -494,4 +578,205 @@ generate_super_res_q_threshold_settings() {
 INSTANTIATE_TEST_CASE_P(
     SUPERRESQTHRESTEST, SuperResTest,
     ::testing::ValuesIn(generate_super_res_q_threshold_settings()),
+    EncTestSetting::GetSettingName);
+
+static const std::vector<EncTestSetting> generate_ref_scaling_settings() {
+    static const std::string test_prefix = "RefScaling";
+    std::vector<EncTestSetting> settings;
+
+    int count = 0;
+    // 8-bit test cases
+    for (size_t i = 8; i <= 16; i++) {
+        for (size_t j = 8; j <= 16; j++) {
+            string idx = std::to_string(count);
+            string name = test_prefix + idx;
+            EncTestSetting setting{name,
+                                   {{"ResizeMode", "1"},
+                                    {"ResizeDenom", std::to_string(i)},
+                                    {"ResizeKfDenom", std::to_string(j)}},
+                                   default_test_vectors};
+            settings.push_back(setting);
+            count++;
+        }
+    }
+#ifdef ENBALE_16BIT_PIPELINE_TEST
+    // 16-bit test cases
+    for (size_t i = 8; i <= 16; i++) {
+        for (size_t j = 8; j <= 16; j++) {
+            string idx = std::to_string(count);
+            string name = test_prefix + idx;
+            EncTestSetting setting{name,
+                                   {{"ResizeMode", "1"},
+                                    {"ResizeDenom", std::to_string(i)},
+                                    {"ResizeKfDenom", std::to_string(j)}},
+                                   {"Encoder16BitPipeline", "1"}},
+                default_test_vectors
+        };
+        settings.push_back(setting);
+        count++;
+    }
+}
+#endif  // ENBALE_16BIT_PIPELINE_TEST
+return settings;
+}
+
+INSTANTIATE_TEST_CASE_P(REFSCALINGTEST, SuperResTest,
+                        ::testing::ValuesIn(generate_ref_scaling_settings()),
+                        EncTestSetting::GetSettingName);
+
+// Test cases of super resolution combine with reference scaling in fixed mode
+static const std::vector<EncTestSetting>
+generate_superres_ref_scaling_settings() {
+    static const std::string test_prefix = "SuperResRefScaling";
+    std::vector<EncTestSetting> settings;
+
+    int count = 0;
+    // 8-bit test cases
+    for (size_t i = 9; i <= 16; i++) {
+        for (size_t j = 9; j <= 16; j++) {
+            string idx = std::to_string(count);
+            string name = test_prefix + idx;
+            EncTestSetting setting{name,
+                                   {{"ResizeMode", "1"},
+                                    {"ResizeDenom", std::to_string(i)},
+                                    {"ResizeKfDenom", std::to_string(i)},
+                                    {"SuperresMode", "1"},
+                                    {"SuperresDenom", std::to_string(j)},
+                                    {"SuperresKfDenom", std::to_string(j)}},
+                                   default_test_vectors};
+            settings.push_back(setting);
+            count++;
+        }
+    }
+    return settings;
+}
+
+INSTANTIATE_TEST_CASE_P(
+    SUPERRESREFSCALINGTEST, SuperResTest,
+    ::testing::ValuesIn(generate_superres_ref_scaling_settings()),
+    EncTestSetting::GetSettingName);
+
+// Test cases of reference scaling random access mode
+static const std::vector<EncTestSetting>
+generate_ref_scaling_random_access_settings() {
+    static const std::string test_prefix = "RefScalingRandomAccess";
+    std::vector<EncTestSetting> settings;
+
+    int count = 0;
+    static const std::string event_prefix = "ScalingEvent @ Frame ";
+    static const std::vector<std::string> param_event_vecs[] = {
+        {std::to_string(RESIZE_FIXED), "16", "15"},
+        {std::to_string(RESIZE_NONE), "0", "0"},
+        {std::to_string(RESIZE_RANDOM), "0", "0"},
+        {std::to_string(RESIZE_FIXED), "12", "10"},
+        {std::to_string(RESIZE_FIXED), "9", "13"},
+    };
+    static const EncSetting param_vecs[] = {
+        // CQP
+        {{"ResizeMode", "4"}, {"RateControlMode", "0"}},
+        // VBR
+        {{"ResizeMode", "4"},
+         {"RateControlMode", "1"},
+         {"TargetBitRate", "1000"}},
+        // CBR
+        {{"ResizeMode", "4"},
+         {"RateControlMode", "2"},
+         {"TargetBitRate", "1000"}}};
+    std::vector<TestFrameEvent> event_vec;
+    uint32_t frame_count = 10;
+    for (std::vector<std::string> param_event : param_event_vecs) {
+        event_vec.push_back(
+            std::make_tuple(event_prefix + std::to_string(frame_count),
+                            frame_count,
+                            REF_FRAME_SCALING_EVENT,
+                            param_event));
+        frame_count += 10;
+    }
+    for (EncSetting param : param_vecs) {
+        string idx = std::to_string(count);
+        string name = test_prefix + idx;
+        EncTestSetting setting{name, param, default_test_vectors, event_vec};
+        settings.push_back(setting);
+        count++;
+    }
+    return settings;
+}
+
+INSTANTIATE_TEST_CASE_P(
+    REFSCALINGRANDOMACCESSTEST, SuperResTest,
+    ::testing::ValuesIn(generate_ref_scaling_random_access_settings()),
+    EncTestSetting::GetSettingName);
+
+/**
+ * @brief SVT-AV1 encoder E2E test with comparing the reconstructed frame with
+ * output frame from decoder buffer list
+ *
+ * Test strategy:
+ * Setup SVT-AV1 encoder with user input parameter combined with different
+ * presets and hierarchical levels, and encode the input YUV data frames.
+ * Collect the reconstructed frames and compared them with reference decoder
+ * output.
+ *
+ * Expected result:
+ * No error is reported in encoding progress. The reconstructed frame
+ * data is same as the output frame from reference decoder.
+ *
+ * Test coverage:
+ * User defined test vectors
+ */
+class FeaturePresetConformanceTest : public ConformanceDeathTest {};
+
+TEST_P(FeaturePresetConformanceTest, DISABLED_FeaturePresetConformanceTest) {
+    run_death_test();
+}
+
+static const std::vector<EncTestSetting> generate_testcase_with_preset_settings(
+    const std::string test_case_name, const std::string feature_name,
+    const std::vector<std::string> values) {
+    static const std::string test_prefix = test_case_name;
+    std::vector<EncTestSetting> settings;
+
+    int count = 0;
+    for (size_t hierarchicallvl = 3; hierarchicallvl <= 5; hierarchicallvl++) {
+        for (size_t preset = 0; preset <= 12; preset++) {
+            for (std::string value : values) {
+                string idx = std::to_string(count);
+                string name = test_prefix + idx;
+                EncTestSetting setting{
+                    name,
+                    {{"HierarchicalLevels", std::to_string(hierarchicallvl)},
+                     {"EncoderMode", std::to_string(preset)},
+                     {feature_name, value}},
+                    default_test_vectors};
+                settings.push_back(setting);
+                count++;
+            }
+        }
+    }
+    return settings;
+}
+
+/**
+ * @brief SVT-AV1 encoder E2E test with comparing the reconstructed frame with
+ * output frame from decoder buffer list when enabled scalng reference random
+ * mode both with different presets and hierarchical levels parameters
+ *
+ * Test strategy:
+ * Setup SVT-AV1 encoder with different preset parameter, and encode the input
+ * YUV data frames. Do the decode and collect the reconstructed frames and
+ * compared them with reference decoder output.
+ *
+ * Expected result:
+ * No error is reported in encoding progress. The reconstructed frame data is
+ * same as the output frame from reference decoder,which proved tiles are
+ * considered independent and the test passes.
+ *
+ * Test coverage:
+ * All test vectors of 640*480, default disabled */
+static const std::vector<std::string> resize_mode = {"2"};
+INSTANTIATE_TEST_CASE_P(
+    REFSCALINGTEST, FeaturePresetConformanceTest,
+    ::testing::ValuesIn(generate_testcase_with_preset_settings("RefScaling",
+                                                               "ResizeMode",
+                                                               resize_mode)),
     EncTestSetting::GetSettingName);

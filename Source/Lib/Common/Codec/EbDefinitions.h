@@ -19,6 +19,7 @@
 #include <assert.h>
 #include "EbSvtAv1.h"
 #include "EbSvtAv1Enc.h"
+#include <stdbool.h>
 #ifdef _WIN32
 #define inline __inline
 #elif __GNUC__
@@ -44,7 +45,8 @@ extern "C" {
 #define MAX_TPL_EXT_GROUP_SIZE MAX_TPL_GROUP_SIZE
 #define OUT_Q_ADVANCE(h) ((h == REFERENCE_QUEUE_MAX_DEPTH - 1) ? 0 : h + 1)
 #define MIN_LAD_MG 1
-#define RC_DEFAULT_LAD_MG 1
+#define RC_DEFAULT_LAD_MG_MT 2 // default look ahead value for rate control in Multi-threaded mode
+#define RC_DEFAULT_LAD_MG_LP1 1 // default look ahead value for rate control in LP 1
 void assert_err(uint32_t condition, char *err_msg);
 
 #define TPL_DEP_COST_SCALE_LOG2 4
@@ -68,6 +70,13 @@ void assert_err(uint32_t condition, char *err_msg);
 
 #define VQ_NOISE_LVL_TH 15000
 #define VQ_STABILITY_ME_VAR_TH 750
+#define VQ_PIC_AVG_VARIANCE_TH 1000
+
+#define MDS0_REDUCE_ANGULAR_INTRA_TH 25
+
+#define NUM_MV_COMPONENTS 2
+#define NUM_MV_HIST 2
+#define MAX_MV_HIST_SIZE 2 * REF_LIST_MAX_DEPTH *NUM_MV_COMPONENTS *NUM_MV_HIST
 
 typedef struct SharpnessCtrls {
     uint8_t scene_transition;
@@ -76,6 +85,7 @@ typedef struct SharpnessCtrls {
     uint8_t ifs;
     uint8_t cdef;
     uint8_t restoration;
+    uint8_t rdoq;
 } SharpnessCtrls;
 
 typedef struct StabilityCtrls {
@@ -150,12 +160,17 @@ typedef struct TfControls {
         me_exit_th; // Specifies whether to exit ME after HME or not (0: perform both HME and Full-Pel search, else if the HME distortion is less than me_exit_th then exit after HME(i.e. do not perform the Full-Pel search), NA if use_fast_filter is set 0)
     uint8_t
         use_pred_64x64_only_th; // Specifies whether to perform Sub-Pel search for only the 64x64 block or to use default size(s) (32x32 or/ and 16x16) (∞: perform Sub-Pel search for default size(s), else if the deviation between the 64x64 ME distortion and the sum of the 4 32x32 ME distortions is less than use_pred_64x64_only_th then perform Sub - Pel search for only the 64x64 block, NA if use_fast_filter is set 0)
-
+    uint8_t
+        subpel_early_exit; // Specifies whether to early exit the Sub-Pel search based on a pred-error-th or not
 } TfControls;
 typedef enum GM_LEVEL {
     GM_FULL   = 0, // Exhaustive search mode.
     GM_DOWN   = 1, // Downsampled search mode, with a downsampling factor of 2 in each dimension
     GM_DOWN16 = 2, // Downsampled search mode, with a downsampling factor of 4 in each dimension
+    GM_ADAPT_0 =
+        3, // The search mode is set adaptively (whether GM_FULL or GM_DOWN) based on the average ME distortion
+    GM_ADAPT_1 =
+        4, // The search mode is set adaptively (whether GM_DOWN or GM_DOWN16) based on the average ME distortion, and the picture variance
 } GM_LEVEL;
 typedef enum SqWeightOffsets {
     CONSERVATIVE_OFFSET_0 = 5,
@@ -163,7 +178,14 @@ typedef enum SqWeightOffsets {
     AGGRESSIVE_OFFSET_0   = -5,
     AGGRESSIVE_OFFSET_1   = -10
 } SqWeightOffsets;
-
+#define COEFF_LVL_TH_0 30000
+#define COEFF_LVL_TH_1 100000
+typedef enum InputCoeffLvl {
+    LOW_LVL     = 0,
+    NORMAL_LVL  = 1,
+    HIGH_LVL    = 2,
+    INVALID_LVL = ~0,
+} InputCoeffLvl;
 struct Buf2D {
     uint8_t *buf;
     uint8_t *buf0;
@@ -180,7 +202,6 @@ typedef struct MvLimits {
 typedef struct {
     uint8_t by;
     uint8_t bx;
-    uint8_t skip;
 } CdefList;
 #define FB_NUM 3 // number of freqiency bands
 #define SSEG_NUM 2 // number of sse_gradient bands
@@ -553,27 +574,23 @@ typedef struct IntraSize {
 
 //*********************************************************************************************************************//
 // enums.h
-/*!\brief Decorator indicating that given struct/union/enum is packed */
-#ifndef ATTRIBUTE_PACKED
-#if defined(__GNUC__) && __GNUC__
-#define ATTRIBUTE_PACKED __attribute__((packed))
-#else
-#define ATTRIBUTE_PACKED
-#endif
-#endif /* ATTRIBUTE_PACKED */
 typedef enum PdPass {
     PD_PASS_0,
     PD_PASS_1,
     PD_PASS_TOTAL,
 } PdPass;
+
 typedef enum ATTRIBUTE_PACKED {
-    REGULAR_PD0    = 0, // The regular PD0 path
-    LIGHT_PD0_LVL1 = 1,
-    LIGHT_PD0_LVL2 = 2,
-    LIGHT_PD0_LVL3 = 3,
-    LIGHT_PD0_LVL4 = 4,
-    VERY_LIGHT_PD0 = 5, // Lightest PD0 path, having more shortcuts than Light-PD1
+    REGULAR_PD0 =
+        -1, // The regular PD0 path; negative so that LPD1 can start at 0 (easy for indexing arrays in lpd0_ctrls)
+    LPD0_LVL_0     = 0,
+    LPD0_LVL_1     = 1,
+    LPD0_LVL_2     = 2,
+    LPD0_LVL_3     = 3,
+    VERY_LIGHT_PD0 = 4, // Lightest PD0 path, doesn't perform TX
+    LPD0_LEVELS // Number of light-PD0 paths (regular PD0 isn't a light-PD0 path)
 } Pd0Level;
+
 typedef enum ATTRIBUTE_PACKED {
     REGULAR_PD1 =
         -1, // The regular PD1 path; negative so that LPD1 can start at 0 (easy for indexing arrays in lpd1_ctrls)
@@ -585,6 +602,7 @@ typedef enum ATTRIBUTE_PACKED {
     LPD1_LVL_5 = 5, // Light-PD1 path, with most aggressive feature levels
     LPD1_LEVELS // Number of light-PD1 paths (regular PD1 isn't a light-PD1 path)
 } Pd1Level;
+// If adding/removing a class, must also update is_intra_class func and MD_STAGE_NICS array
 typedef enum CandClass {
     CAND_CLASS_0,
     CAND_CLASS_1,
@@ -601,7 +619,7 @@ typedef enum MdStagingMode {
     MD_STAGING_MODE_2,
     MD_STAGING_MODE_TOTAL
 } MdStagingMode;
-
+static INLINE bool is_intra_class(CandClass c) { return (c == CAND_CLASS_0 || c == CAND_CLASS_3); }
 #define NICS_PIC_TYPE 3
 #define NICS_SCALING_LEVELS 16
 static const uint32_t MD_STAGE_NICS[NICS_PIC_TYPE][CAND_CLASS_TOTAL] =
@@ -626,7 +644,7 @@ static const uint32_t MD_STAGE_NICS_SCAL_NUM[NICS_SCALING_LEVELS][MD_STAGE_TOTAL
     {0, 6, 6, 6}, // LEVEL 6
     {0, 4, 5, 5}, // LEVEL 7
     {0, 4, 4, 4}, // LEVEL 8
-    {0, 4, 3, 3}, // LEVEL 9
+    {0, 3, 4, 4}, // LEVEL 9
     {0, 3, 3, 3}, // LEVEL 10
     {0, 3, 2, 2}, // LEVEL 11
     {0, 3, 1, 1}, // LEVEL 12
@@ -752,6 +770,17 @@ typedef enum ATTRIBUTE_PACKED {
     PART_V4,
     PART_S
 } Part;
+
+static const PartitionType from_shape_to_part[EXT_PARTITION_TYPES] = {PARTITION_NONE,
+                                                                      PARTITION_HORZ,
+                                                                      PARTITION_VERT,
+                                                                      PARTITION_HORZ_A,
+                                                                      PARTITION_HORZ_B,
+                                                                      PARTITION_VERT_A,
+                                                                      PARTITION_VERT_B,
+                                                                      PARTITION_HORZ_4,
+                                                                      PARTITION_VERT_4,
+                                                                      PARTITION_SPLIT};
 
 static const uint8_t mi_size_wide[BlockSizeS_ALL] = {1,  1,  2,  2,  2,  4, 4, 4, 8, 8, 8,
                                                      16, 16, 16, 32, 32, 1, 4, 2, 8, 4, 16};
@@ -1180,8 +1209,6 @@ typedef struct {
     // Temp buffer used for inter prediction
     uint8_t *seg_mask;
 } InterInterCompoundData;
-
-#define InterIntraMode InterIntraMode
 typedef enum ATTRIBUTE_PACKED {
     FILTER_DC_PRED,
     FILTER_V_PRED,
@@ -1248,28 +1275,41 @@ static const PredictionMode fimode_to_intramode[FILTER_INTRA_MODES] = {
 typedef uint8_t TXFM_CONTEXT;
 
 // frame types
-#define NONE_FRAME -1
-#define INTRA_FRAME 0
-#define LAST_FRAME 1
-#define LAST2_FRAME 2
-#define LAST3_FRAME 3
-#define GOLDEN_FRAME 4
-#define BWDREF_FRAME 5
-#define ALTREF2_FRAME 6
-#define ALTREF_FRAME 7
-#define LAST_REF_FRAMES (LAST3_FRAME - LAST_FRAME + 1)
+enum {
+    NONE_FRAME = -1,
+    INTRA_FRAME,
+    LAST_FRAME,
+    LAST2_FRAME,
+    LAST3_FRAME,
+    GOLDEN_FRAME,
+    BWDREF_FRAME,
+    ALTREF2_FRAME,
+    ALTREF_FRAME,
+    REF_FRAMES,
+
+    // Extra/scratch reference frame. It may be:
+    // - used to update the ALTREF2_FRAME ref (see lshift_bwd_ref_frames()), or
+    // - updated from ALTREF2_FRAME ref (see rshift_bwd_ref_frames()).
+    EXTREF_FRAME = REF_FRAMES,
+
+    // Number of inter (non-intra) reference types.
+    INTER_REFS_PER_FRAME = ALTREF_FRAME - LAST_FRAME + 1,
+
+    TOTAL_REFS_PER_FRAME = ALTREF_FRAME - INTRA_FRAME + 1,
+
+    // Number of forward (aka past) reference types.
+    FWD_REFS = GOLDEN_FRAME - LAST_FRAME + 1,
+
+    // Number of backward (aka future) reference types.
+    BWD_REFS = ALTREF_FRAME - BWDREF_FRAME + 1,
+
+    SINGLE_REFS = FWD_REFS + BWD_REFS,
+};
 
 #define REFS_PER_FRAME 7
-#define INTER_REFS_PER_FRAME (ALTREF_FRAME - LAST_FRAME + 1)
-#define TOTAL_REFS_PER_FRAME (ALTREF_FRAME - INTRA_FRAME + 1)
 
-#define FWD_REFS (GOLDEN_FRAME - LAST_FRAME + 1)
 #define FWD_RF_OFFSET(ref) (ref - LAST_FRAME)
-#define BWD_REFS (ALTREF_FRAME - BWDREF_FRAME + 1)
 #define BWD_RF_OFFSET(ref) (ref - BWDREF_FRAME)
-
-#define SINGLE_REFS (FWD_REFS + BWD_REFS)
-
 typedef enum ATTRIBUTE_PACKED {
     LAST_LAST2_FRAMES, // { LAST_FRAME, LAST2_FRAME }
     LAST_LAST3_FRAMES, // { LAST_FRAME, LAST3_FRAME }
@@ -1307,7 +1347,11 @@ typedef enum ATTRIBUTE_PACKED {
 #define SCALE_NUMERATOR 8
 #define SUPERRES_SCALE_BITS 3
 #define SUPERRES_SCALE_DENOMINATOR_MIN (SCALE_NUMERATOR + 1)
-#define NUM_SCALES 8
+#define NUM_SR_SCALES 8 // number of super-res scales
+#define NUM_RESIZE_SCALES \
+    9 // number of resize scales, index 0~8 means 8/8~8/16 and index 9 means 3/4 for dynamic mode
+#define SCALE_DENOMINATOR_MAX 16 // maximum scaling denominator is 16
+#define SCALE_THREE_QUATER 17 // 3/4 of resize dynamic mode is defined as 17
 
 //**********************************************************************************************************************//
 // onyxc_int.h
@@ -1743,7 +1787,13 @@ static INLINE int32_t get_ext_tx_set(TxSize tx_size, int32_t is_inter, int32_t u
     const TxSetType set_type = get_ext_tx_set_type(tx_size, is_inter, use_reduced_set);
     return ext_tx_set_index[is_inter][set_type];
 }
-
+static INLINE Bool is_intra_mode(PredictionMode mode) {
+    return mode <
+        INTRA_MODE_END; // && mode >= INTRA_MODE_START; // mode is always greater than INTRA_MODE_START
+}
+static INLINE Bool is_inter_mode(PredictionMode mode) {
+    return mode >= SINGLE_INTER_MODE_START && mode < COMP_INTER_MODE_END;
+}
 static INLINE int32_t is_inter_compound_mode(PredictionMode mode) {
     return mode >= NEAREST_NEARESTMV && mode <= NEW_NEWMV;
 }
@@ -1785,14 +1835,6 @@ typedef enum FrameContextIndex {
 // Total number of QM sets stored
 #define QM_LEVEL_BITS 4
 #define NUM_QM_LEVELS (1 << QM_LEVEL_BITS)
-/* Range of QMS is between first and last value, with offset applied to inter
-* blocks*/
-#define DEFAULT_QM_Y 10
-#define DEFAULT_QM_U 11
-#define DEFAULT_QM_V 12
-#define DEFAULT_QM_FIRST 5
-#define DEFAULT_QM_LAST 9
-
 //**********************************************************************************************************************//
 // blockd.h
 #define NO_FILTER_FOR_IBC 1 // Disable in-loop filters for frame with intrabc
@@ -1840,61 +1882,8 @@ typedef struct LoopFilterInfoN {
     LoopFilterThresh lfthr[MAX_LOOP_FILTER + 1];
     uint8_t          lvl[MAX_MB_PLANE][MAX_SEGMENTS][2][REF_FRAMES][MAX_MODE_LF_DELTAS];
 } LoopFilterInfoN;
-
-//**********************************************************************************************************************//
-// cdef.h
-typedef enum {
-    CDEF_FULL_SEARCH, /**< Full search */
-    CDEF_FAST_SEARCH_LVL1, /**< Search among a subset of all possible filters. */
-    CDEF_FAST_SEARCH_LVL2, /**< Search reduced subset of filters than Level 1. */
-    CDEF_FAST_SEARCH_LVL3, /**< Search reduced subset of secondary filters than
-                              Level 2. */
-    CDEF_PICK_FROM_Q, /**< Estimate filter strength based on quantizer. */
-    CDEF_PICK_METHODS
-} CDEF_PICK_METHOD;
-#define CDEF_STRENGTH_BITS 6
-
 #define CDEF_PRI_STRENGTHS 16
 #define CDEF_SEC_STRENGTHS 4
-#define REDUCED_PRI_STRENGTHS_LVL1 8
-#define REDUCED_PRI_STRENGTHS_LVL2 5
-#define REDUCED_SEC_STRENGTHS_LVL3 2
-
-#define REDUCED_TOTAL_STRENGTHS_LVL1 (REDUCED_PRI_STRENGTHS_LVL1 * CDEF_SEC_STRENGTHS)
-#define REDUCED_TOTAL_STRENGTHS_LVL2 (REDUCED_PRI_STRENGTHS_LVL2 * CDEF_SEC_STRENGTHS)
-#define REDUCED_TOTAL_STRENGTHS_LVL3 (REDUCED_PRI_STRENGTHS_LVL2 * REDUCED_SEC_STRENGTHS_LVL3)
-#define TOTAL_STRENGTHS (CDEF_PRI_STRENGTHS * CDEF_SEC_STRENGTHS)
-
-static const int   priconv_lvl1[REDUCED_PRI_STRENGTHS_LVL1] = {0, 1, 2, 3, 5, 7, 10, 13};
-static const int   priconv_lvl2[REDUCED_PRI_STRENGTHS_LVL2] = {0, 2, 4, 8, 14};
-static const int   secconv_lvl3[REDUCED_SEC_STRENGTHS_LVL3] = {0, 2};
-static const int   nb_cdef_strengths[CDEF_PICK_METHODS]     = {TOTAL_STRENGTHS,
-                                                         REDUCED_TOTAL_STRENGTHS_LVL1,
-                                                         REDUCED_TOTAL_STRENGTHS_LVL2,
-                                                         REDUCED_TOTAL_STRENGTHS_LVL3,
-                                                         TOTAL_STRENGTHS};
-static INLINE void get_cdef_filter_strengths(CDEF_PICK_METHOD pick_method, int *pri_strength,
-                                             int *sec_strength, int strength_idx) {
-    const int tot_sec_filter = (pick_method == CDEF_FAST_SEARCH_LVL3) ? REDUCED_SEC_STRENGTHS_LVL3
-                                                                      : CDEF_SEC_STRENGTHS;
-    const int pri_idx        = strength_idx / tot_sec_filter;
-    const int sec_idx        = strength_idx % tot_sec_filter;
-    *pri_strength            = pri_idx;
-    *sec_strength            = sec_idx;
-    if (pick_method == CDEF_FULL_SEARCH)
-        return;
-
-    switch (pick_method) {
-    case CDEF_FAST_SEARCH_LVL1: *pri_strength = priconv_lvl1[pri_idx]; break;
-    case CDEF_FAST_SEARCH_LVL2: *pri_strength = priconv_lvl2[pri_idx]; break;
-    case CDEF_FAST_SEARCH_LVL3:
-        *pri_strength = priconv_lvl2[pri_idx];
-        *sec_strength = secconv_lvl3[sec_idx];
-        break;
-    default: assert(0 && "Invalid CDEF search method");
-    }
-}
-
 // Bits of precision used for the model
 #define WARPEDMODEL_PREC_BITS 16
 // The following constants describe the various precisions
@@ -2081,17 +2070,6 @@ buffers to and from the eBrisk API.  The EbByte type is a 32 bit pointer.
 The pointer is word aligned and the buffer is byte aligned.
 */
 
-/** The EbBitDepthEnum type is used to describe the bitdepth of video data.
-*/
-typedef enum EbBitDepthEnum
-{
-    EB_8BIT = 8,
-    EB_10BIT = 10,
-    EB_12BIT = 12,
-    EB_14BIT = 14,
-    EB_16BIT = 16,
-    EB_32BIT = 32
-} EbBitDepthEnum;
 /** The MD_BIT_DEPTH_MODE type is used to describe the bitdepth of MD path.
 */
 
@@ -2102,32 +2080,16 @@ typedef enum MD_BIT_DEPTH_MODE
     EB_DUAL_BIT_MD  = 2     // Auto: 8bit & 10bit mode decision
 } MD_BIT_DEPTH_MODE;
 
-/** The EB_GOP type is used to describe the hierarchical coding structure of
-Groups of Pictures (GOP) units.
-*/
-#define EbPred                 uint8_t
-#define EB_PRED_LOW_DELAY_P     0
-#define EB_PRED_LOW_DELAY_B     1
-#define EB_PRED_RANDOM_ACCESS   2
-#define EB_PRED_TOTAL_COUNT     3
-#define EB_PRED_INVALID         0xFF
-
-/** The EB_SLICE type is used to describe the slice prediction type.
-*/
-
-#define EB_SLICE        uint8_t
-#define B_SLICE         0
-#define P_SLICE         1
-#define I_SLICE         2
-#define IDR_SLICE       3
-#define INVALID_SLICE   0xFF
-
-/** The EbPictStruct type is used to describe the picture structure.
-*/
-#define EbPictStruct           uint8_t
-#define PROGRESSIVE_PICT_STRUCT  0
-#define TOP_FIELD_PICT_STRUCT    1
-#define BOTTOM_FIELD_PICT_STRUCT 2
+/*
+ * The SliceType type is used to describe the slice prediction type.
+ */
+typedef enum ATTRIBUTE_PACKED {
+    B_SLICE = 0,
+    P_SLICE = 1,
+    I_SLICE = 2,
+    IDR_SLICE = 3,
+    INVALID_SLICE = 0xFF
+} SliceType;
 
 /** The EbModeType type is used to describe the PU type.
 */
@@ -2136,103 +2098,21 @@ typedef uint8_t EbModeType;
 #define INTRA_MODE 2
 
 #define INVALID_MODE 0xFFu
-
-/** The EbPartMode type is used to describe the CU partition size.
-*/
-typedef uint8_t EbPartMode;
-#define SIZE_2Nx2N 0
-#define SIZE_2NxN  1
-#define SIZE_Nx2N  2
-#define SIZE_NxN   3
-#define SIZE_2NxnU 4
-#define SIZE_2NxnD 5
-#define SIZE_nLx2N 6
-#define SIZE_nRx2N 7
-#define SIZE_PART_MODE 8
-
-#define SIZE_2Nx2N_PARTITION_MASK   (1 << SIZE_2Nx2N)
-#define SIZE_2NxN_PARTITION_MASK    (1 << SIZE_2NxN)
-#define SIZE_Nx2N_PARTITION_MASK    (1 << SIZE_Nx2N)
-#define SIZE_NxN_PARTITION_MASK     (1 << SIZE_NxN)
-#define SIZE_2NxnU_PARTITION_MASK   (1 << SIZE_2NxnU)
-#define SIZE_2NxnD_PARTITION_MASK   (1 << SIZE_2NxnD)
-#define SIZE_nLx2N_PARTITION_MASK   (1 << SIZE_nLx2N)
-#define SIZE_nRx2N_PARTITION_MASK   (1 << SIZE_nRx2N)
-
-/** The EbEncMode type is used to describe the encoder mode .
-*/
-
-#define EbEncMode     int8_t
-#define ENC_MRS         -2 // Highest quality research mode (slowest)
-#define ENC_MR          -1 //Research mode with higher quality than M0
-#define ENC_M0          0
-#define ENC_M1          1
-#define ENC_M2          2
-#define ENC_M3          3
-#define ENC_M4          4
-#define ENC_M5          5
-#define ENC_M6          6
-#define ENC_M7          7
-#define ENC_M8          8
-#define ENC_M9          9
-#define ENC_M10         10
-#define ENC_M11         11
-#define ENC_M12         12
-#define ENC_M13         13
-
-#define MAX_SUPPORTED_MODES 16
-
 #define SPEED_CONTROL_INIT_MOD ENC_M4;
-/** The EB_TUID type is used to identify a TU within a CU.
-*/
-typedef enum EbTuSize
-{
-    TU_2Nx2N       = 0,
-    TU_NxN_0       = 1,
-    TU_NxN_1       = 2,
-    TU_NxN_2       = 3,
-    TU_NxN_3       = 4,
-    TU_N2xN2_0     = 5,
-    TU_N2xN2_1     = 6,
-    TU_N2xN2_2     = 7,
-    TU_N2xN2_3     = 8,
-    INVALID_TUSIZE = ~0
-}EbTuSize;
+typedef enum ATTRIBUTE_PACKED {
+    REF_LIST_0 = 0,
+    REF_LIST_1 = 1,
+    TOTAL_NUM_OF_REF_LISTS = 2,
+    INVALID_LIST = 0xFF
+} RefList;
 
-#define TU_2Nx2N_PARTITION_MASK     (1 << TU_2Nx2N)
-#define TU_NxN_0_PARTITION_MASK     (1 << TU_NxN_0)
-#define TU_NxN_1_PARTITION_MASK     (1 << TU_NxN_1)
-#define TU_NxN_2_PARTITION_MASK     (1 << TU_NxN_2)
-#define TU_NxN_3_PARTITION_MASK     (1 << TU_NxN_3)
-#define TU_N2xN2_0_PARTITION_MASK   (1 << TU_N2xN2_0)
-#define TU_N2xN2_1_PARTITION_MASK   (1 << TU_N2xN2_1)
-#define TU_N2xN2_2_PARTITION_MASK   (1 << TU_N2xN2_2)
-#define TU_N2xN2_3_PARTITION_MASK   (1 << TU_N2xN2_3)
-
-#define EbReflist            uint8_t
-#define REF_LIST_0             0
-#define REF_LIST_1             1
-#define TOTAL_NUM_OF_REF_LISTS 2
-#define INVALID_LIST           0xFF
-
-#define EbPredDirection         uint8_t
-#define UNI_PRED_LIST_0          0
-#define UNI_PRED_LIST_1          1
-#define BI_PRED                  2
-#define EB_PREDDIRECTION_TOTAL   3
-#define INVALID_PRED_DIRECTION   0xFF
-
-#define UNI_PRED_LIST_0_MASK    (1 << UNI_PRED_LIST_0)
-#define UNI_PRED_LIST_1_MASK    (1 << UNI_PRED_LIST_1)
-#define BI_PRED_MASK            (1 << BI_PRED)
-
-// The EB_QP_OFFSET_MODE type is used to describe the QP offset
-#define EB_FRAME_CARACTERICTICS uint8_t
-#define EB_FRAME_CARAC_0           0
-#define EB_FRAME_CARAC_1           1
-#define EB_FRAME_CARAC_2           2
-#define EB_FRAME_CARAC_3           3
-#define EB_FRAME_CARAC_4           4
+typedef enum ATTRIBUTE_PACKED {
+    UNI_PRED_LIST_0 = 0,
+    UNI_PRED_LIST_1 = 1,
+    BI_PRED = 2,
+    EB_PREDDIRECTION_TOTAL = 3,
+    INVALID_PRED_DIRECTION = 0xFF
+} PredDirection;
 
 #define  MAX_PAL_CAND   14
 
@@ -2278,23 +2158,9 @@ typedef EbErrorType(*EbCreator)(
     EbPtr object_init_data_ptr);
 
 #define INVALID_MV            0x80008000 //0xFFFFFFFF    //ICOPY They changed this to 0x80008000
-#define BLKSIZE 64
-
 /***************************************
 * Generic linked list data structure for passing data into/out from the library
 ***************************************/
-// Reserved types for lib's internal use. Must be less than EB_EXT_TYPE_BASE
-#define       EB_TYPE_PIC_TIMING_SEI         0
-#define       EB_TYPE_BUFFERING_PERIOD_SEI   1
-#define       EB_TYPE_RECOVERY_POINT_SEI     2
-#define       EB_TYPE_UNREG_USER_DATA_SEI    3
-#define       EB_TYPE_REG_USER_DATA_SEI      4
-#define       EB_TYPE_PIC_STRUCT             5             // It is a requirement (for the application) that if pictureStruct is present for 1 picture it shall be present for every picture
-#define       EB_TYPE_INPUT_PICTURE_DEF      6
-
-#define       EB_TYPE_HIERARCHICAL_LEVELS  100
-#define       EB_TYPE_PRED_STRUCTURE       101
-
 typedef int32_t EbLinkedListType;
 
 typedef struct EbLinkedListNode
@@ -2304,7 +2170,7 @@ typedef struct EbLinkedListNode
                                                             // release_cb_fnc_ptr may need to access it.
     EbLinkedListType       type;                      // type of data pointed by "data" member variable
     uint32_t                    size;                      // size of (data)
-    EbBool                   passthrough;               // whether this is passthrough data from application
+    Bool                   passthrough;               // whether this is passthrough data from application
     void(*release_cb_fnc_ptr)(struct EbLinkedListNode*); // callback to be executed by encoder when picture reaches end of pipeline, or
                                                         // when aborting. However, at end of pipeline encoder shall
                                                         // NOT invoke this callback if passthrough is TRUE (but
@@ -2430,18 +2296,16 @@ void(*error_handler)(
 #define MAX_NUM_OF_PU_PER_CU                        1
 #define MAX_NUM_OF_REF_PIC_LIST                     2
 #define MAX_NUM_OF_PART_SIZE                        8
-#define EB_MAX_SB_DEPTH                            (((BLOCK_SIZE_64 / MIN_BLOCK_SIZE) == 1) ? 1 : \
-                                                    ((BLOCK_SIZE_64 / MIN_BLOCK_SIZE) == 2) ? 2 : \
-                                                    ((BLOCK_SIZE_64 / MIN_BLOCK_SIZE) == 4) ? 3 : \
-                                                    ((BLOCK_SIZE_64 / MIN_BLOCK_SIZE) == 8) ? 4 : \
-                                                    ((BLOCK_SIZE_64 / MIN_BLOCK_SIZE) == 16) ? 5 : \
-                                                    ((BLOCK_SIZE_64 / MIN_BLOCK_SIZE) == 32) ? 6 : 7)
 #define MIN_CU_BLK_COUNT                            ((BLOCK_SIZE_64 / MIN_BLOCK_SIZE) * (BLOCK_SIZE_64 / MIN_BLOCK_SIZE))
 #define MAX_NUM_OF_TU_PER_CU                        21
 #define MIN_NUM_OF_TU_PER_CU                        5
 // super-resolution definitions
 #define MIN_SUPERRES_DENOM                          8
 #define MAX_SUPERRES_DENOM                          16
+
+// reference scaling definitions
+#define MIN_RESIZE_DENOM                            8
+#define MAX_RESIZE_DENOM                            16
 
 //***Prediction Structure***
 #define MAX_TEMPORAL_LAYERS                         6
@@ -2474,170 +2338,8 @@ typedef enum DownSamplingMethod
 
 #define MIN_QP_VALUE                     0
 #define MAX_QP_VALUE                    63
-#define MAX_CHROMA_MAP_QP_VALUE         63
-
-//***Transforms***
-#define TRANSFORMS_LUMA_FLAG        0
-#define TRANSFORMS_CHROMA_FLAG      1
-#define TRANSFORMS_COLOR_LEN        2
-#define TRANSFORMS_LUMA_MASK        (1 << TRANSFORMS_LUMA_FLAG)
-#define TRANSFORMS_CHROMA_MASK      (1 << TRANSFORMS_CHROMA_FLAG)
-#define TRANSFORMS_FULL_MASK        ((1 << TRANSFORMS_LUMA_FLAG) | (1 << TRANSFORMS_CHROMA_FLAG))
-
-#define TRANSFORMS_SIZE_32_FLAG     0
-#define TRANSFORMS_SIZE_16_FLAG     1
-#define TRANSFORMS_SIZE_8_FLAG      2
-#define TRANSFORMS_SIZE_4_FLAG      3
-#define TRANSFORMS_SIZE_LEN         4
-#define TRANSFORM_MAX_SIZE          64
-#define TRANSFORM_MIN_SIZE          4
-
-#define TRANS_BIT_INCREMENT    0
-#define QUANT_IQUANT_SHIFT     20 // Q(QP%6) * IQ(QP%6) = 2^20
-#define QUANT_SHIFT            14 // Q(4) = 2^14
-#define SCALE_BITS             15 // Inherited from TMuC, pressumably for fractional bit estimates in RDOQ
-#define MAX_TR_DYNAMIC_RANGE   15 // Maximum transform dynamic range (excluding sign bit)
-#define MAX_POS_16BIT_NUM      32767
-#define MIN_NEG_16BIT_NUM      -32768
-#define QUANT_OFFSET_I         171
-#define QUANT_OFFSET_P         85
-#define LOW_SB_VARIANCE        10
-#define MEDIUM_SB_VARIANCE        50
-
-/*********************************************************
-* used for the first time, but not the last time interpolation filter
-*********************************************************/
-#define Shift1       InternalBitDepthIncrement
-#define MinusOffset1 (1 << (IF_Negative_Offset + InternalBitDepthIncrement))
-
-/*********************************************************
-* used for neither the first time nor the last time interpolation filter
-*********************************************************/
-#define Shift2       IF_Shift
-
-/*********************************************************
-* used for the first time, and also the last time interpolation filter
-*********************************************************/
-#define Shift3       IF_Shift
-#define Offset3      (1<<(Shift3-1))
-
-/*********************************************************
-* used for not the first time, but the last time interpolation filter
-*********************************************************/
-#define Shift4       (IF_Shift + IF_Shift - InternalBitDepthIncrement)
-#define Offset4      ((1 << (IF_Shift + IF_Negative_Offset)) + (1 << (Shift4 - 1)))
-#if (InternalBitDepthIncrement == 0)
-#define ChromaOffset4 (1 << (Shift4 - 1))
-#else
-#define ChromaOffset4 Offset4
-#endif
-
-/*********************************************************
-* used for weighted sample prediction
-*********************************************************/
-#define Shift5       (IF_Shift - InternalBitDepthIncrement + 1)
-#define Offset5      ((1 << (Shift5 - 1)) + (1 << (IF_Negative_Offset + 1)))
-#if (InternalBitDepthIncrement == 0)
-#define ChromaOffset5 (1 << (Shift5 - 1))
-#else
-#define ChromaOffset5 Offset5
-#endif
-
-/*********************************************************
-* used for biPredCopy()
-*********************************************************/
-#define Shift6       (IF_Shift - InternalBitDepthIncrement)
-#define MinusOffset6 (1 << IF_Negative_Offset)
-#if (InternalBitDepthIncrement == 0)
-#define ChromaMinusOffset6 0
-#else
-#define ChromaMinusOffset6 MinusOffset6
-#endif
-
-/*********************************************************
-* 10bit case
-*********************************************************/
-
-#define  SHIFT1D_10BIT      6
-#define  OFFSET1D_10BIT     32
-
-#define  SHIFT2D1_10BIT     2
-#define  OFFSET2D1_10BIT    (-32768)
-
-#define  SHIFT2D2_10BIT     10
-#define  OFFSET2D2_10BIT    524800
-
-//BIPRED
-#define  BI_SHIFT_10BIT         4
-#define  BI_OFFSET_10BIT        8192//2^(14-1)
-
-#define  BI_AVG_SHIFT_10BIT     5
-#define  BI_AVG_OFFSET_10BIT    16400
-
-#define  BI_SHIFT2D2_10BIT      6
-#define  BI_OFFSET2D2_10BIT     0
-
 // Noise detection
 #define  NOISE_VARIANCE_TH                390
-// Intrinisc
-#define INTRINSIC_SSE2                                1
-
-// Enhance background macros for decimated 64x64
-#define BEA_CLASS_0_0_DEC_TH 16 * 16    // 16x16 block size * 1
-#define BEA_CLASS_0_DEC_TH     16 * 16 * 2    // 16x16 block size * 2
-#define BEA_CLASS_1_DEC_TH     16 * 16 * 4    // 16x16 block size * 4
-#define BEA_CLASS_2_DEC_TH     16 * 16 * 8    // 16x16 block size * 8
-
-// Enhance background macros
-#define BEA_CLASS_0_0_TH 8 * 8        // 8x8 block size * 1
-
-#define BEA_CLASS_0_TH    8 * 8 * 2    // 8x8 block size * 2
-#define BEA_CLASS_1_TH    8 * 8 * 4    // 8x8 block size * 4
-#define BEA_CLASS_2_TH    8 * 8 * 8    // 8x8 block size * 8
-
-#define UNCOVERED_AREA_ZZ_TH 4 * 4 * 14
-
-#define BEA_CLASS_0_ZZ_COST     0
-#define BEA_CLASS_0_1_ZZ_COST     3
-
-#define BEA_CLASS_1_ZZ_COST    10
-#define BEA_CLASS_2_ZZ_COST    20
-#define BEA_CLASS_3_ZZ_COST    30
-#define INVALID_ZZ_COST    (uint8_t) ~0
-
-#define PM_NON_MOVING_INDEX_TH 23
-
-#define QP_OFFSET_SB_SCORE_0    0
-#define QP_OFFSET_SB_SCORE_1    50
-#define QP_OFFSET_SB_SCORE_2    100
-#define UNCOVERED_AREA_ZZ_COST_TH 8
-#define BEA_MIN_DELTA_QP_T00 1
-#define BEA_MIN_DELTA_QP_T0  3
-#define BEA_MIN_DELTA_QP_T1  5
-#define BEA_MIN_DELTA_QP_T2  5
-#define BEA_DISTANSE_RATIO_T0 900
-#define BEA_DISTANSE_RATIO_T1 600
-#define ACTIVE_PICTURE_ZZ_COST_TH 29
-
-#define BEA_MAX_DELTA_QP 1
-
-#define FAILING_MOTION_DELTA_QP            -5
-#define FAILING_MOTION_VAR_THRSLHD        50
-static const uint8_t intra_area_th_class_1[MAX_HIERARCHICAL_LEVEL][MAX_TEMPORAL_LAYERS] = { // [Highest Temporal Layer] [Temporal Layer Index]
-    { 20 },
-    { 30, 20 },
-    { 40, 30, 20 },
-    { 50, 40, 30, 20 },
-    { 50, 40, 30, 20, 10 },
-    { 50, 40, 30, 20, 10, 10 }
-};
-
-#define NON_MOVING_SCORE_0     0
-#define NON_MOVING_SCORE_1    10
-#define NON_MOVING_SCORE_2    20
-#define NON_MOVING_SCORE_3    30
-#define INVALID_NON_MOVING_SCORE (uint8_t) ~0
-
 // Picture split into regions for analysis (SCD, Dynamic GOP)
 #define CLASS_SUB_0_REGION_SPLIT_PER_WIDTH    1
 #define CLASS_SUB_0_REGION_SPLIT_PER_HEIGHT    1
@@ -2647,38 +2349,6 @@ static const uint8_t intra_area_th_class_1[MAX_HIERARCHICAL_LEVEL][MAX_TEMPORAL_
 
 #define HIGHER_THAN_CLASS_1_REGION_SPLIT_PER_WIDTH        4
 #define HIGHER_THAN_CLASS_1_REGION_SPLIT_PER_HEIGHT        4
-
-// Dynamic GOP activity TH - to tune
-
-#define DYNAMIC_GOP_SUB_1080P_L6_VS_L5_COST_TH        11
-#define DYNAMIC_GOP_SUB_1080P_L5_VS_L4_COST_TH        19
-#define DYNAMIC_GOP_SUB_1080P_L4_VS_L3_COST_TH        30    // No L4_VS_L3 - 25 is the TH after 1st round of tuning
-
-#define DYNAMIC_GOP_ABOVE_1080P_L6_VS_L5_COST_TH    15//25//5//
-#define DYNAMIC_GOP_ABOVE_1080P_L5_VS_L4_COST_TH    25//28//9//
-#define DYNAMIC_GOP_ABOVE_1080P_L4_VS_L3_COST_TH    30    // No L4_VS_L3 - 28 is the TH after 1st round of tuning
-#define DYNAMIC_GOP_SUB_480P_L6_VS_L5_COST_TH        9
-#define GRADUAL_LUMINOSITY_CHANGE_TH                        3
-#define FADED_SB_PERCENTAGE_TH                             10
-#define FADED_PICTURES_TH                                   15
-#define CLASS_SUB_0_PICTURE_ACTIVITY_REGIONS_TH             1
-#define CLASS_1_SIZE_PICTURE_ACTIVITY_REGIONS_TH            2
-#define HIGHER_THAN_CLASS_1_PICTURE_ACTIVITY_REGIONS_TH     8
-
-#define MAX_SUPPORTED_SEGMENTS                            7
-#define NUM_QPS                                           52
-
-
-// Aura detection definitions
-#define    AURA_4K_DISTORTION_TH    25
-#define    AURA_4K_DISTORTION_TH_6L 20
-
-// The EB_4L_PRED_ERROR_CLASS type is used to inform about the prediction error compared to 4L
-#define EB_4L_PRED_ERROR_CLASS    uint8_t
-#define PRED_ERROR_CLASS_0          0
-#define PRED_ERROR_CLASS_1          1
-#define INVALID_PRED_ERROR_CLASS    128
-
 #define EbScdMode uint8_t
 #define SCD_MODE_0  0     // SCD OFF
 #define SCD_MODE_1   1     // Light SCD (histograms generation on the 1/16 decimated input)
@@ -2687,33 +2357,20 @@ static const uint8_t intra_area_th_class_1[MAX_HIERARCHICAL_LEVEL][MAX_TEMPORAL_
 #define EbBlockMeanPrec uint8_t
 #define BLOCK_MEAN_PREC_FULL 0
 #define BLOCK_MEAN_PREC_SUB  1
-
-#define EbPmMode uint8_t
-#define PM_MODE_0  0     // 1-stage PM
-#define PM_MODE_1  1     // 2-stage PM 4K
-#define PM_MODE_2  2     // 2-stage PM Sub 4K
-
-#define EB_ZZ_SAD_MODE uint8_t
-#define ZZ_SAD_MODE_0  0        // ZZ SAD on Decimated resolution
-#define ZZ_SAD_MODE_1  1        // ZZ SAD on Full resolution
-
-#define EbPfMode uint8_t
-#define PF_OFF  0
-#define PF_N2   1
-#define PF_N4   2
 #define STAGE uint8_t
 #define ED_STAGE  1      // ENCDEC stage
+typedef enum {
+    DEFAULT_SHAPE = 0,
+    N2_SHAPE      = 1,
+    N4_SHAPE      = 2,
+    ONLY_DC_SHAPE = 3
+}EB_TRANS_COEFF_SHAPE;
 
-#define EB_TRANS_COEFF_SHAPE uint8_t
-#define DEFAULT_SHAPE 0
-#define N2_SHAPE      1
-#define N4_SHAPE      2
-#define ONLY_DC_SHAPE 3
-
-#define EB_CHROMA_LEVEL uint8_t
-#define CHROMA_MODE_0  0 // Full chroma search @ MD
-#define CHROMA_MODE_1  1 // Fast chroma search @ MD
-#define CHROMA_MODE_2  2 // Chroma blind @ MD
+typedef enum {
+    CHROMA_MODE_0 = 0, // Full chroma search @ MD
+    CHROMA_MODE_1 = 1, // Fast chroma search @ MD
+    CHROMA_MODE_2 = 2  // Chroma blind @ MD
+}ChromaLevel;
 
 // Multi-Pass Partitioning Depth(Multi - Pass PD) performs multiple PD stages for the same SB towards 1 final Partitioning Structure
 // As we go from PDn to PDn + 1, the prediction accuracy of the MD feature(s) increases while the number of block(s) decreases
@@ -2723,36 +2380,6 @@ typedef enum MultiPassPdLevel
     MULTI_PASS_PD_ON      = 1, // Multi-Pass PD ON  = PD0 | PD0_REFINEMENT | PD1
     MULTI_PASS_PD_INVALID = 0, // Invalid Multi-Pass PD Mode
 } MultiPassPdLevel;
-#define EB_SB_DEPTH_MODE              uint8_t
-#define SB_SQ_BLOCKS_DEPTH_MODE             1
-#define SB_SQ_NON4_BLOCKS_DEPTH_MODE        2
-static const int32_t global_motion_threshold[MAX_HIERARCHICAL_LEVEL][MAX_TEMPORAL_LAYERS] = { // [Highest Temporal Layer] [Temporal Layer Index]
-    { 2 },
-    { 4, 2 },
-    { 8, 4, 2 },
-    { 16, 8, 4, 2 },
-    { 32, 16, 8, 4, 2 },    // Derived by analogy from 4-layer settings
-    { 64, 32, 16, 8, 4, 2 }
-};
-
-static const int32_t hme_level_0_search_area_multiplier_x[MAX_HIERARCHICAL_LEVEL][MAX_TEMPORAL_LAYERS] = { // [Highest Temporal Layer] [Temporal Layer Index]
-    { 100 },
-    { 100, 100 },
-    { 100, 100, 100 },
-    { 200, 140, 100,  70 },
-    { 350, 200, 100, 100, 100 },
-    { 525, 350, 200, 100, 100, 100 }
-};
-
-static const int32_t hme_level_0_search_area_multiplier_y[MAX_HIERARCHICAL_LEVEL][MAX_TEMPORAL_LAYERS] = { // [Highest Temporal Layer] [Temporal Layer Index]
-    { 100 },
-    { 100, 100 },
-    { 100, 100, 100 },
-    { 200, 140, 100, 70 },
-    { 350, 200, 100, 100, 100 },
-    { 525, 350, 200, 100, 100, 100 }
-};
-
 typedef enum RasterScanCuIndex
 {
     // 2Nx2N [85 partitions]
@@ -2941,97 +2568,6 @@ static const uint32_t raster_scan_blk_parent_index[CU_MAX_COUNT] =
     17, 17, 18, 18, 19, 19, 20, 20,
     17, 17, 18, 18, 19, 19, 20, 20
 };
-
-#define UNCOMPRESS_SAD(x) ( ((x) & 0x1FFF)<<(((x)>>13) & 7) )
-
-static const uint32_t md_scan_to_ois_32x32_scan[CU_MAX_COUNT] =
-{
-    /*0  */0,
-    /*1  */0,
-    /*2  */0,
-    /*3  */0,
-    /*4  */0,
-    /*5  */0,
-    /*6  */0,
-    /*7  */0,
-    /*8  */0,
-    /*9  */0,
-    /*10 */0,
-    /*11 */0,
-    /*12 */0,
-    /*13 */0,
-    /*14 */0,
-    /*15 */0,
-    /*16 */0,
-    /*17 */0,
-    /*18 */0,
-    /*19 */0,
-    /*20 */0,
-    /*21 */0,
-    /*22 */1,
-    /*23 */1,
-    /*24 */1,
-    /*25 */1,
-    /*26 */1,
-    /*27 */1,
-    /*28 */1,
-    /*29 */1,
-    /*30 */1,
-    /*31 */1,
-    /*32 */1,
-    /*33 */1,
-    /*34 */1,
-    /*35 */1,
-    /*36 */1,
-    /*37 */1,
-    /*38 */1,
-    /*39 */1,
-    /*40 */1,
-    /*41 */1,
-    /*42 */1,
-    /*43 */2,
-    /*44 */2,
-    /*45 */2,
-    /*46 */2,
-    /*47 */2,
-    /*48 */2,
-    /*49 */2,
-    /*50 */2,
-    /*51 */2,
-    /*52 */2,
-    /*53 */2,
-    /*54 */2,
-    /*55 */2,
-    /*56 */2,
-    /*57 */2,
-    /*58 */2,
-    /*59 */2,
-    /*60 */2,
-    /*61 */2,
-    /*62 */2,
-    /*63 */2,
-    /*64 */3,
-    /*65 */3,
-    /*66 */3,
-    /*67 */3,
-    /*68 */3,
-    /*69 */3,
-    /*70 */3,
-    /*71 */3,
-    /*72 */3,
-    /*73 */3,
-    /*74 */3,
-    /*75 */3,
-    /*76 */3,
-    /*77 */3,
-    /*78 */3,
-    /*79 */3,
-    /*80 */3,
-    /*81 */3,
-    /*82 */3,
-    /*83 */3,
-    /*84 */3,
-};
 typedef struct StatStruct
 {
     uint64_t   poc;
@@ -3041,13 +2577,6 @@ typedef struct StatStruct
     uint8_t    temporal_layer_index;
 } StatStruct;
 #define SC_MAX_LEVEL 2 // 2 sets of HME/ME settings are used depending on the scene content mode
-
-typedef enum HmeDecimation
-{
-    ZERO_DECIMATION_HME = 0, // Perform HME search on full-res picture; no refinement
-    ONE_DECIMATION_HME = 1, // HME search on quarter-res picture; 1 refinement level
-    TWO_DECIMATION_HME = 2, // HME search on sixteenth-res picture; 2 refinement level
-} HmeDecimation;
 static const uint8_t me_idx_85_8x8_to_16x16_conversion[] = {
     5,5,      6,6,      7,7,      8,8,
     5,5,      6,6,      7,7,      8,8,
@@ -3076,6 +2605,7 @@ typedef enum IntrabcMotionDirection
 } IntrabcMotionDirection;
 typedef struct _EbEncHandle EbEncHandle;
 typedef struct _EbThreadContext EbThreadContext;
+
 #ifdef __cplusplus
 }
 #endif

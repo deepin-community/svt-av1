@@ -25,6 +25,14 @@ extern "C" {
 
 extern aom_highbd_convolve_fn_t convolveHbd[/*subX*/ 2][/*subY*/ 2][/*bi*/ 2];
 
+struct calc_target_weighted_pred_ctxt {
+    int32_t       *mask_buf;
+    int32_t       *wsrc_buf;
+    const uint8_t *tmp;
+    int            tmp_stride;
+    int            overlap;
+};
+
 EbErrorType av1_simple_luma_unipred(SequenceControlSet *scs_ptr, ScaleFactors sf_identity,
                                     uint32_t interp_filters, BlkStruct *blk_ptr,
                                     uint8_t ref_frame_type, MvUnit *mv_unit, uint16_t pu_origin_x,
@@ -62,9 +70,8 @@ void av1_inter_prediction_light_pd0(SequenceControlSet *scs_ptr, MvUnit *mv_unit
 
 void search_compound_diff_wedge(PictureControlSet *pcs_ptr, struct ModeDecisionContext *context_ptr,
                                 ModeDecisionCandidate *candidate_ptr);
-EbBool calc_pred_masked_compound(PictureControlSet          *pcs_ptr,
-                                 struct ModeDecisionContext *context_ptr,
-                                 ModeDecisionCandidate      *candidate_ptr);
+Bool calc_pred_masked_compound(PictureControlSet *pcs_ptr, struct ModeDecisionContext *context_ptr,
+                               ModeDecisionCandidate *candidate_ptr);
 
 EbErrorType inter_pu_prediction_av1_light_pd0(uint8_t                      hbd_mode_decision,
                                               struct ModeDecisionContext  *md_context_ptr,
@@ -87,12 +94,23 @@ EbErrorType warped_motion_prediction(
     uint16_t dst_origin_y, NeighborArrayUnit *luma_recon_neighbor_array,
     NeighborArrayUnit *cb_recon_neighbor_array, NeighborArrayUnit *cr_recon_neighbor_array,
     ModeDecisionCandidate *candidate_ptr, EbWarpedMotionParams *wm_params_l0,
-    EbWarpedMotionParams *wm_params_l1, uint8_t bit_depth, EbBool perform_chroma,
-    EbBool is_encode_pass);
+    EbWarpedMotionParams *wm_params_l1, uint8_t bit_depth, Bool perform_chroma,
+    Bool is_encode_pass);
 
 const uint8_t *svt_av1_get_obmc_mask(int length);
 void model_rd_from_sse(BlockSize bsize, int16_t quantizer, uint8_t bit_depth, uint64_t sse,
                        uint32_t *rate, uint64_t *dist, uint8_t simple_model_rd_from_var);
+void enc_make_inter_predictor(SequenceControlSet *scs, uint8_t *src_ptr, uint8_t *src_ptr_2b,
+                              uint8_t *dst_ptr, int16_t pre_y, int16_t pre_x, MV mv,
+                              const struct ScaleFactors *const sf, ConvolveParams *conv_params,
+                              InterpFilters interp_filters, InterInterCompoundData *interinter_comp,
+                              uint8_t *seg_mask, uint16_t frame_width, uint16_t frame_height,
+                              uint8_t blk_width, uint8_t blk_height, BlockSize bsize,
+                              MacroBlockD *av1xd, int32_t src_stride, int32_t dst_stride,
+                              uint8_t plane, const uint32_t ss_y, const uint32_t ss_x,
+                              uint8_t bit_depth, uint8_t use_intrabc, uint8_t is_masked_compound,
+                              uint8_t is16bit);
+
 #ifdef __cplusplus
 }
 #endif

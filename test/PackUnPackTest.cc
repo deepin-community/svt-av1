@@ -458,18 +458,29 @@ INSTANTIATE_TEST_CASE_P(
                        ::testing::Values(svt_unpack_and_2bcompress_sse4_1,
                                          svt_unpack_and_2bcompress_avx2)));
 
+INSTANTIATE_TEST_CASE_P(
+    UNPACK2BCOMPRESS_EXTEND2, Unpack2bCompress,
+    ::testing::Combine(::testing::Values(AreaSize(32, 1), AreaSize(32, 2),
+                                         AreaSize(32, 3), AreaSize(32, 5),
+                                         AreaSize(64, 1), AreaSize(64, 2),
+                                         AreaSize(64, 3), AreaSize(64, 5),
+                                         AreaSize(65, 3), AreaSize(66, 5),
+                                         AreaSize(129, 3), AreaSize(129, 5)),
+                       ::testing::Values(svt_unpack_and_2bcompress_sse4_1,
+                                         svt_unpack_and_2bcompress_avx2)));
+
 // test svt_enc_msb_pack2d_avx2_intrin_al and svt_enc_msb_pack2d_sse2_intrin.
 // There is an implicit assumption that the width should be multiple of 4.
 // Also there are special snippet to handle width of {4, 8, 16, 32, 64}, so use
 // TEST_COMMON_SIZES to cover all the width;
 AreaSize TEST_COMMON_SIZES[] = {
-    AreaSize(4, 4),    AreaSize(4, 8),   AreaSize(8, 4),   AreaSize(8, 8),
-    AreaSize(16, 16),  AreaSize(4, 16),  AreaSize(16, 4),  AreaSize(16, 8),
-    AreaSize(8, 16),   AreaSize(32, 32), AreaSize(32, 8),  AreaSize(16, 32),
-    AreaSize(8, 32),   AreaSize(32, 16), AreaSize(16, 64), AreaSize(64, 16),
-    AreaSize(64, 64),  AreaSize(64, 32), AreaSize(32, 64), AreaSize(128, 128),
-    AreaSize(68, 64),  AreaSize(72, 64), AreaSize(80, 64), AreaSize(96, 64),
-    AreaSize(64, 128), AreaSize(128, 64)};
+    AreaSize(4, 4),    AreaSize(4, 8),    AreaSize(8, 4),   AreaSize(8, 8),
+    AreaSize(16, 16),  AreaSize(4, 16),   AreaSize(16, 4),  AreaSize(16, 8),
+    AreaSize(8, 16),   AreaSize(32, 32),  AreaSize(32, 8),  AreaSize(16, 32),
+    AreaSize(8, 32),   AreaSize(32, 16),  AreaSize(16, 64), AreaSize(64, 16),
+    AreaSize(64, 64),  AreaSize(64, 32),  AreaSize(32, 64), AreaSize(128, 128),
+    AreaSize(68, 64),  AreaSize(72, 64),  AreaSize(80, 64), AreaSize(96, 64),
+    AreaSize(64, 128), AreaSize(128, 64), AreaSize(48, 64), AreaSize(24, 64)};
 
 class Pack2dTest : public ::testing::TestWithParam<AreaSize> {
   public:
@@ -603,8 +614,10 @@ class UnPackTest : public ::testing::TestWithParam<AreaSize> {
         test_size_ = MAX_SB_SQUARE;
         out_8bit_buffer1_ = nullptr;
         out_8bit_buffer2_ = nullptr;
+        out_8bit_buffer3_ = nullptr;
         out_nbit_buffer1_ = nullptr;
         out_nbit_buffer2_ = nullptr;
+        out_nbit_buffer3_ = nullptr;
         in_16bit_buffer_ = nullptr;
     }
 
@@ -613,16 +626,22 @@ class UnPackTest : public ::testing::TestWithParam<AreaSize> {
             reinterpret_cast<uint8_t *>(svt_aom_memalign(32, test_size_));
         out_8bit_buffer2_ =
             reinterpret_cast<uint8_t *>(svt_aom_memalign(32, test_size_));
+        out_8bit_buffer3_ =
+            reinterpret_cast<uint8_t *>(svt_aom_memalign(32, test_size_));
         out_nbit_buffer1_ =
             reinterpret_cast<uint8_t *>(svt_aom_memalign(32, test_size_));
         out_nbit_buffer2_ =
+            reinterpret_cast<uint8_t *>(svt_aom_memalign(32, test_size_));
+        out_nbit_buffer3_ =
             reinterpret_cast<uint8_t *>(svt_aom_memalign(32, test_size_));
         in_16bit_buffer_ = reinterpret_cast<uint16_t *>(
             svt_aom_memalign(32, sizeof(uint16_t) * test_size_));
         memset(out_8bit_buffer1_, 0, test_size_);
         memset(out_8bit_buffer2_, 0, test_size_);
+        memset(out_8bit_buffer3_, 0, test_size_);
         memset(out_nbit_buffer1_, 0, test_size_);
         memset(out_nbit_buffer2_, 0, test_size_);
+        memset(out_nbit_buffer3_, 0, test_size_);
     }
 
     void TearDown() override {
@@ -632,10 +651,14 @@ class UnPackTest : public ::testing::TestWithParam<AreaSize> {
             svt_aom_free(out_8bit_buffer1_);
         if (out_8bit_buffer2_)
             svt_aom_free(out_8bit_buffer2_);
+        if (out_8bit_buffer3_)
+            svt_aom_free(out_8bit_buffer3_);
         if (out_nbit_buffer1_)
             svt_aom_free(out_nbit_buffer1_);
         if (out_nbit_buffer2_)
             svt_aom_free(out_nbit_buffer2_);
+        if (out_nbit_buffer3_)
+            svt_aom_free(out_nbit_buffer3_);
         aom_clear_system_state();
     }
 
@@ -701,6 +724,14 @@ class UnPackTest : public ::testing::TestWithParam<AreaSize> {
                                    out_stride_,
                                    area_width_,
                                    area_height_);
+            svt_enc_msb_un_pack2d_avx2_intrin(in_16bit_buffer_,
+                                              in_stride_,
+                                              out_8bit_buffer3_,
+                                              out_nbit_buffer3_,
+                                              out_stride_,
+                                              out_stride_,
+                                              area_width_,
+                                              area_height_);
 
             check_output(area_width_,
                          area_height_,
@@ -715,13 +746,27 @@ class UnPackTest : public ::testing::TestWithParam<AreaSize> {
                 << "svt_enc_msb_un_pack2d_sse2_intrin failed at " << i
                 << "th test with size (" << area_width_ << "," << area_height_
                 << ")";
+
+            check_output(area_width_,
+                         area_height_,
+                         out_8bit_buffer2_,
+                         out_8bit_buffer3_);
+            check_output(area_width_,
+                         area_height_,
+                         out_nbit_buffer2_,
+                         out_nbit_buffer3_);
+
+            EXPECT_FALSE(HasFailure())
+                << "svt_enc_msb_un_pack2d_avx2_intrin failed at " << i
+                << "th test with size (" << area_width_ << "," << area_height_
+                << ")";
         }
     }
 
     uint16_t *in_16bit_buffer_;
     uint32_t in_stride_, out_stride_;
-    uint8_t *out_8bit_buffer1_, *out_8bit_buffer2_, *out_nbit_buffer1_,
-        *out_nbit_buffer2_;
+    uint8_t *out_8bit_buffer1_, *out_8bit_buffer2_, *out_8bit_buffer3_,
+        *out_nbit_buffer1_, *out_nbit_buffer2_, *out_nbit_buffer3_;
     uint32_t area_width_, area_height_;
     uint32_t test_size_;
 };

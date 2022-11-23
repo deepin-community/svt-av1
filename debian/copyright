@@ -117,13 +117,13 @@ Comment:
 
 Files: *
 Copyright: 2016-2021 Alliance for Open Media
-           2018-2021 Intel Corporation
+           2018-2022 Intel Corporation
            2020 Tencent Corporation
            2019 Netflix, Inc.
 License: BSD-3-Clause-Clear
 
 Files: gstreamer-plugin/gstsvtav1enc.*
-Copyright: 2019 Intel Corporation
+Copyright: 2019-2022 Intel Corporation
 License: LGPL-2.1+
 
 Files: Source/Lib/Common/ASM_SSE2/x86inc.asm
@@ -151,7 +151,7 @@ Copyright: 2007-2013 by Cisco Systems, Inc
 License: Expat
 
 Files: debian/*
-Copyright: 2021 Collabora, Ltd.
+Copyright: 2021-2022 Collabora, Ltd.
 License: BSD-2-clause
 
 License: BSD-2-clause

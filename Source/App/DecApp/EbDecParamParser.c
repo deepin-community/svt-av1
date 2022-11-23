@@ -38,7 +38,7 @@ static void set_bit_depth(const char *value, EbSvtAv1DecConfiguration *cfg) {
     cfg->max_bit_depth = strtoul(value, NULL, 0);
 };
 static void set_decoder_16bit_pipeline(const char *value, EbSvtAv1DecConfiguration *cfg) {
-    cfg->is_16bit_pipeline = (EbBool)strtoul(value, NULL, 0);
+    cfg->is_16bit_pipeline = (Bool)strtoul(value, NULL, 0);
     if (cfg->is_16bit_pipeline != 1 && cfg->is_16bit_pipeline != 0) {
         fprintf(stderr, "Warning : Invalid value for is_16bit_pipeline, setting value to 0. \n");
         cfg->is_16bit_pipeline = 0;
@@ -102,9 +102,9 @@ static void show_help() {
     H0(" -parallel-frames <arg>    Number of frames to be processed in parallel \n");
     H0(" -md5                      MD5 support flag \n");
     H0(" -fps-frm                  Show fps after each frame decoded\n");
-    H0(" -fps-summary              Show fps summary");
-    H0(" -skip-film-grain          Disable Film Grain");
-    H0(" -16bit-pipeline           Enable 16b pipeline. [1 - enable, 0 - disable]");
+    H0(" -fps-summary              Show fps summary\n");
+    H0(" -skip-film-grain          Disable Film Grain\n");
+    H0(" -16bit-pipeline           Enable 16b pipeline. [1 - enable, 0 - disable]\n");
 
     exit(1);
 }

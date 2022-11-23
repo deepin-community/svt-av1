@@ -9,7 +9,6 @@
 * PATENTS file, you can obtain it at https://www.aomedia.org/license/patent-license.
 */
 
-
 /*
 * This file contains only debug macros that are used during the development
 * and are supposed to be cleaned up every tag cycle
@@ -24,7 +23,6 @@
 * - all macros must have a coherent comment explaining what the MACRO is doing
 * - #if 0 / #if 1 are not to be used
 */
-
 
 #ifndef EbDebugMacros_h
 #define EbDebugMacros_h
@@ -41,6 +39,7 @@ extern "C" {
 #define DEBUG_TPL               0 // Prints to debug TPL
 #define DETAILED_FRAME_OUTPUT   0 // Prints detailed frame output from the library for debugging
 #define TUNE_CHROMA_SSIM        0 // Allows for Chroma and SSIM BDR-based Tuning
+#define TUNE_CQP_CHROMA_SSIM    0 // Tune CQP qp scaling towards improved chroma and SSIM BDR
 
 #define MIN_PIC_PARALLELIZATION 0 // Use the minimum amount of picture parallelization
 #define SRM_REPORT              0 // Report SRM status
@@ -52,7 +51,6 @@ extern "C" {
 #else
 #define REMOVE_LP1_LPN_DIFF     0 // Disallow single-thread/multi-thread differences
 #endif
-#define FIX_1PVBR               1 // Derive initial qp based on target bitrate
 // Super-resolution debugging code
 #define DEBUG_SCALING           0
 #define DEBUG_TF                0
@@ -60,6 +58,11 @@ extern "C" {
 #define DEBUG_SUPERRES_RECODE   0
 #define DEBUG_SUPERRES_ENERGY   0
 #define DEBUG_RC_CAP_LOG        0 // Prints for RC cap
+
+// Switch frame debugging code
+#define DEBUG_SFRAME            0
+// Quantization matrices
+#define DEBUG_QM_LEVEL          0
 
 #ifdef __cplusplus
 }
