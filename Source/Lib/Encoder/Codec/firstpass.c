@@ -58,7 +58,7 @@ static EbErrorType realloc_stats_out(SequenceControlSet *scs_ptr, FirstPassStats
         size_t capability = (int64_t)frame_number >= (int64_t)STATS_CAPABILITY_INIT - 1
             ? STATS_CAPABILITY_GROW(frame_number)
             : STATS_CAPABILITY_INIT;
-        if (scs_ptr->lap_enabled) {
+        if (scs_ptr->lap_rc) {
             //store the data points before re-allocation
             uint64_t stats_in_start_offset = 0;
             uint64_t stats_in_offset       = 0;
@@ -177,8 +177,12 @@ void svt_av1_end_first_pass(PictureParentControlSet *pcs_ptr) {
 
     if (twopass->stats_buf_ctx->total_stats) {
         // add the total to the end of the file
+        svt_block_on_mutex(twopass->stats_buf_ctx->stats_in_write_mutex);
+
         FIRSTPASS_STATS total_stats = *twopass->stats_buf_ctx->total_stats;
         output_stats(scs_ptr, &total_stats, pcs_ptr->picture_number + 1);
+
+        svt_release_mutex(twopass->stats_buf_ctx->stats_in_write_mutex);
     }
 }
 #define UL_INTRA_THRESH 50
@@ -245,8 +249,11 @@ static void update_firstpass_stats(PictureParentControlSet *pcs_ptr, const FRAME
     SequenceControlSet *scs_ptr = pcs_ptr->scs_ptr;
     TWO_PASS *          twopass = &scs_ptr->twopass;
 
-    const uint32_t   mb_cols          = (scs_ptr->seq_header.max_frame_width + 16 - 1) / 16;
-    const uint32_t   mb_rows          = (scs_ptr->seq_header.max_frame_height + 16 - 1) / 16;
+    const uint32_t   mb_cols          = (scs_ptr->max_input_luma_width + 16 - 1) / 16;
+    const uint32_t   mb_rows          = (scs_ptr->max_input_luma_height + 16 - 1) / 16;
+
+    svt_block_on_mutex(twopass->stats_buf_ctx->stats_in_write_mutex);
+
     FIRSTPASS_STATS *this_frame_stats = twopass->stats_buf_ctx->stats_in_end_write;
     FIRSTPASS_STATS  fps;
     // The minimum error here insures some bit allocation to frames even
@@ -270,6 +277,12 @@ static void update_firstpass_stats(PictureParentControlSet *pcs_ptr, const FRAME
         fps.coded_error    = (double)(stats->coded_error >> 8) + min_err;
         fps.sr_coded_error = (double)(stats->sr_coded_error >> 8) + min_err;
         fps.intra_error     = (double)(stats->intra_error >> 8) + min_err;
+        // if blocks are skipped, the errors need to be updated
+        if (bypass_blk_step == 2) {
+            fps.coded_error *= 3;
+            fps.sr_coded_error *= 3;
+            fps.intra_error *= 3;
+        }
         fps.count           = 1.0;
         fps.pcnt_inter      = (double)stats->inter_count / num_mbs;
         fps.pcnt_second_ref = (double)stats->second_ref_count / num_mbs;
@@ -310,6 +323,7 @@ static void update_firstpass_stats(PictureParentControlSet *pcs_ptr, const FRAME
         (twopass->stats_buf_ctx->stats_in_end_write >= twopass->stats_buf_ctx->stats_in_buf_end)) {
         twopass->stats_buf_ctx->stats_in_end_write = twopass->stats_buf_ctx->stats_in_start;
     }
+    svt_release_mutex(twopass->stats_buf_ctx->stats_in_write_mutex);
 }
 
 static FRAME_STATS accumulate_frame_stats(FRAME_STATS *mb_stats, int mb_rows, int mb_cols,
@@ -354,8 +368,8 @@ static FRAME_STATS accumulate_frame_stats(FRAME_STATS *mb_stats, int mb_rows, in
 void setup_firstpass_data_seg(PictureParentControlSet *ppcs_ptr, int32_t segment_index) {
     SequenceControlSet * scs_ptr           = ppcs_ptr->scs_ptr;
     FirstPassData *      firstpass_data    = &ppcs_ptr->firstpass_data;
-    const uint32_t       mb_cols           = (scs_ptr->seq_header.max_frame_width + 16 - 1) / 16;
-    const uint32_t       mb_rows           = (scs_ptr->seq_header.max_frame_height + 16 - 1) / 16;
+    const uint32_t       mb_cols           = (scs_ptr->max_input_luma_width + 16 - 1) / 16;
+    const uint32_t       mb_rows           = (scs_ptr->max_input_luma_height + 16 - 1) / 16;
     EbPictureBufferDesc *input_picture_ptr = ppcs_ptr->enhanced_picture_ptr;
 
     uint32_t blk_cols = (uint32_t)(input_picture_ptr->width + BLOCK_SIZE_64 - 1) / BLOCK_SIZE_64;
@@ -391,8 +405,8 @@ void setup_firstpass_data_seg(PictureParentControlSet *ppcs_ptr, int32_t segment
 void first_pass_frame_end(PictureParentControlSet *pcs_ptr, uint8_t skip_frame,
                           uint8_t bypass_blk_step, const double ts_duration) {
     SequenceControlSet *scs_ptr = pcs_ptr->scs_ptr;
-    const uint32_t      mb_cols = (scs_ptr->seq_header.max_frame_width + 16 - 1) / 16;
-    const uint32_t      mb_rows = (scs_ptr->seq_header.max_frame_height + 16 - 1) / 16;
+    const uint32_t      mb_cols = (scs_ptr->max_input_luma_width + 16 - 1) / 16;
+    const uint32_t      mb_rows = (scs_ptr->max_input_luma_height + 16 - 1) / 16;
 
     FRAME_STATS *mb_stats = pcs_ptr->firstpass_data.mb_stats;
 
@@ -465,6 +479,16 @@ extern EbErrorType first_pass_signal_derivation_pre_analysis_scs(SequenceControl
     scs_ptr->seq_header.cdef_level /*enable_cdef*/ = 0;
     scs_ptr->seq_header.enable_warped_motion       = 0;
 
+    scs_ptr->seq_header.enable_superres                 = 0;
+    scs_ptr->compound_mode                              = 0;
+    scs_ptr->seq_header.order_hint_info.enable_jnt_comp = 0;
+    scs_ptr->seq_header.enable_masked_compound          = 0;
+    scs_ptr->seq_header.filter_intra_level              = 0;
+    scs_ptr->seq_header.enable_interintra_compound      = 0;
+
+    // Set the SCD Mode
+    scs_ptr->scd_mode = scs_ptr->static_config.scene_change_detection == 0 ? SCD_MODE_0 : SCD_MODE_1;
+
     return return_error;
 }
 
@@ -472,7 +496,8 @@ extern EbErrorType first_pass_signal_derivation_pre_analysis_scs(SequenceControl
 #define MOTION_ERROR_THRESH 500
 void set_tf_controls(PictureParentControlSet *pcs_ptr, uint8_t tf_level);
 void set_wn_filter_ctrls(Av1Common *cm, uint8_t wn_filter_lvl);
-void set_dlf_controls(PictureParentControlSet *pcs_ptr, uint8_t dlf_level);
+void set_sg_filter_ctrls(Av1Common *cm, uint8_t wn_filter_lvl);
+
 /******************************************************
 * Derive Multi-Processes Settings for first pass
 Input   : encoder mode and tune
@@ -499,69 +524,43 @@ EbErrorType first_pass_signal_derivation_multi_processes(SequenceControlSet *   
     pcs_ptr->multi_pass_pd_level = MULTI_PASS_PD_OFF;
 
     // Set disallow_nsq
-    pcs_ptr->disallow_nsq = EB_TRUE;
+    pcs_ptr->disallow_nsq = TRUE;
 
     pcs_ptr->max_number_of_pus_per_sb          = SQUARE_PU_COUNT;
-    pcs_ptr->disallow_all_nsq_blocks_below_8x8 = EB_TRUE;
+    pcs_ptr->disallow_all_nsq_blocks_below_8x8 = TRUE;
 
     // Set disallow_all_nsq_blocks_below_16x16: 16x8, 8x16, 16x4, 4x16
-    pcs_ptr->disallow_all_nsq_blocks_below_16x16 = EB_TRUE;
+    pcs_ptr->disallow_all_nsq_blocks_below_16x16 = TRUE;
 
-    pcs_ptr->disallow_all_nsq_blocks_below_64x64 = EB_TRUE;
-    pcs_ptr->disallow_all_nsq_blocks_below_32x32 = EB_TRUE;
-    pcs_ptr->disallow_all_nsq_blocks_above_64x64 = EB_TRUE;
-    pcs_ptr->disallow_all_nsq_blocks_above_32x32 = EB_TRUE;
+    pcs_ptr->disallow_all_nsq_blocks_below_64x64 = TRUE;
+    pcs_ptr->disallow_all_nsq_blocks_below_32x32 = TRUE;
+    pcs_ptr->disallow_all_nsq_blocks_above_64x64 = TRUE;
+    pcs_ptr->disallow_all_nsq_blocks_above_32x32 = TRUE;
     // disallow_all_nsq_blocks_above_16x16
-    pcs_ptr->disallow_all_nsq_blocks_above_16x16 = EB_TRUE;
-
-    pcs_ptr->disallow_HVA_HVB_HV4 = EB_TRUE;
-    pcs_ptr->disallow_HV4         = EB_TRUE;
+    pcs_ptr->disallow_all_nsq_blocks_above_16x16 = TRUE;
+    pcs_ptr->disallow_HVA_HVB = TRUE;
+    pcs_ptr->disallow_HV4 = TRUE;
 
     // Set disallow_all_non_hv_nsq_blocks_below_16x16
-    pcs_ptr->disallow_all_non_hv_nsq_blocks_below_16x16 = EB_TRUE;
+    pcs_ptr->disallow_all_non_hv_nsq_blocks_below_16x16 = TRUE;
 
     // Set disallow_all_h4_v4_blocks_below_16x16
-    pcs_ptr->disallow_all_h4_v4_blocks_below_16x16 = EB_TRUE;
+    pcs_ptr->disallow_all_h4_v4_blocks_below_16x16 = TRUE;
 
     frm_hdr->allow_screen_content_tools = 0;
     frm_hdr->allow_intrabc              = 0;
-
-    // Palette Modes:
-    //    0:OFF
-    //    1:Slow    NIC=7/4/4
-    //    2:        NIC=7/2/2
-    //    3:        NIC=7/2/2 + No K means for non ref
-    //    4:        NIC=4/2/1
-    //    5:        NIC=4/2/1 + No K means for Inter frame
-    //    6:        Fastest NIC=4/2/1 + No K means for non base + step for non base for most dominent
     pcs_ptr->palette_level = 0;
-    set_dlf_controls(pcs_ptr, 0);
-    // CDEF Level                                   Settings
-    // 0                                            OFF
-    // 1                                            1 step refinement
-    // 2                                            4 step refinement
-    // 3                                            8 step refinement
-    // 4                                            16 step refinement
-    // 5                                            64 step refinement
+
+    svt_aom_set_dlf_controls(pcs_ptr, 0, scs_ptr->static_config.encoder_bit_depth);
+
     pcs_ptr->cdef_level = 0;
 
-    // SG Level                                    Settings
-    // 0                                            OFF
-    // 1                                            0 step refinement
-    // 2                                            1 step refinement
-    // 3                                            4 step refinement
-    // 4                                            16 step refinement
-    Av1Common *cm      = pcs_ptr->av1_cm;
-    cm->sg_filter_mode = 0;
-
+    Av1Common *cm = pcs_ptr->av1_cm;
     set_wn_filter_ctrls(cm, 0);
+    set_sg_filter_ctrls(cm, 0);
+    pcs_ptr->enable_restoration = 0;
 
     pcs_ptr->intra_pred_mode = 3;
-
-    // Set Tx Search     Settings
-    // 0                 OFF
-    // 1                 ON
-    pcs_ptr->tx_size_search_mode = 1;
 
     // Set frame end cdf update mode      Settings
     // 0                                  OFF
@@ -629,7 +628,6 @@ EbErrorType first_pass_signal_derivation_mode_decision_config_kernel(PictureCont
  ************************************************/
 void *set_first_pass_me_hme_params_oq(MeContext *me_context_ptr, SequenceControlSet *scs_ptr,
                                       EbInputResolution input_resolution) {
-    me_context_ptr->stat_factor = 100;
     // HME/ME default settings
     me_context_ptr->num_hme_sa_w = 2;
     me_context_ptr->num_hme_sa_h = 2;
@@ -654,7 +652,7 @@ void *set_first_pass_me_hme_params_oq(MeContext *me_context_ptr, SequenceControl
     me_context_ptr->hme_l1_sa = (SearchArea){8, 8};
     me_context_ptr->hme_l2_sa = (SearchArea){8, 8};
     // Scale up the MIN ME area if low frame rate
-    uint8_t low_frame_rate_flag = (scs_ptr->static_config.frame_rate >> 16) < 50 ? 1 : 0;
+    bool low_frame_rate_flag = (scs_ptr->frame_rate >> 16);
     if (low_frame_rate_flag) {
         me_context_ptr->me_sa.sa_min.width  = (me_context_ptr->me_sa.sa_min.width * 3) >> 1;
         me_context_ptr->me_sa.sa_min.height = (me_context_ptr->me_sa.sa_min.height * 3) >> 1;
@@ -863,9 +861,9 @@ static int open_loop_firstpass_inter_prediction(
     FRAME_STATS *stats, int down_step) {
     int32_t        mb_row  = blk_origin_y >> 4;
     int32_t        mb_col  = blk_origin_x >> 4;
-    const uint32_t mb_cols = (ppcs_ptr->scs_ptr->seq_header.max_frame_width + FORCED_BLK_SIZE - 1) /
+    const uint32_t mb_cols = (ppcs_ptr->scs_ptr->max_input_luma_width + FORCED_BLK_SIZE - 1) /
         FORCED_BLK_SIZE;
-    const uint32_t mb_rows = (ppcs_ptr->scs_ptr->seq_header.max_frame_height + FORCED_BLK_SIZE -
+    const uint32_t mb_rows = (ppcs_ptr->scs_ptr->max_input_luma_height + FORCED_BLK_SIZE -
                               1) /
         FORCED_BLK_SIZE;
     int                   this_inter_error           = this_intra_error;
@@ -878,7 +876,7 @@ static int open_loop_firstpass_inter_prediction(
         uint32_t           me_mb_offset = 0;
         BlockGeom          blk_geom;
         const MeSbResults *me_results = ppcs_ptr->pa_me_data->me_results[me_sb_addr];
-        uint32_t           me_sb_size = ppcs_ptr->scs_ptr->sb_sz;
+        uint32_t           me_sb_size = ppcs_ptr->scs_ptr->b64_size;
         blk_geom.origin_x             = blk_origin_x - (blk_origin_x / me_sb_size) * me_sb_size;
         blk_geom.origin_y             = blk_origin_y - (blk_origin_y / me_sb_size) * me_sb_size;
         blk_geom.bwidth               = FORCED_BLK_SIZE;
@@ -1036,7 +1034,7 @@ static EbErrorType first_pass_frame_seg(PictureParentControlSet *ppcs_ptr, int32
     const uint32_t blk_rows = (uint32_t)(input_picture_ptr->height + FORCED_BLK_SIZE - 1) /
         FORCED_BLK_SIZE;
 
-    uint32_t me_sb_size         = ppcs_ptr->scs_ptr->sb_sz;
+    uint32_t me_sb_size         = ppcs_ptr->scs_ptr->b64_size;
     uint32_t me_pic_width_in_sb = (ppcs_ptr->aligned_width + me_sb_size - 1) / me_sb_size;
     uint32_t me_sb_x, me_sb_y, me_sb_addr;
 
@@ -1331,7 +1329,7 @@ void open_loop_first_pass(PictureParentControlSet *  ppcs_ptr,
                              me_context_ptr->me_context_ptr->skip_frame,
                              me_context_ptr->me_context_ptr->bypass_blk_step,
                              ppcs_ptr->ts_duration);
-        if (ppcs_ptr->end_of_sequence_flag && !ppcs_ptr->scs_ptr->lap_enabled)
+        if (ppcs_ptr->end_of_sequence_flag && !ppcs_ptr->scs_ptr->lap_rc)
             svt_av1_end_first_pass(ppcs_ptr);
         // Signal that the first pass is done
         svt_post_semaphore(ppcs_ptr->first_pass_done_semaphore);

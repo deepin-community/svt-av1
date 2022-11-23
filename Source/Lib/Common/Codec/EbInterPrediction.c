@@ -223,7 +223,7 @@ MV32 svt_av1_scale_mv(const MV *mvq4, int x, int y, const ScaleFactors *sf) {
     const int  x_off_q4 = scaled_x(x << SUBPEL_BITS, sf);
     const int  y_off_q4 = scaled_y(y << SUBPEL_BITS, sf);
     const MV32 res      = {scaled_y((y << SUBPEL_BITS) + mvq4->row, sf) - y_off_q4,
-                      scaled_x((x << SUBPEL_BITS) + mvq4->col, sf) - x_off_q4};
+                           scaled_x((x << SUBPEL_BITS) + mvq4->col, sf) - x_off_q4};
     return res;
 }
 
@@ -1401,14 +1401,18 @@ void svt_highbd_inter_predictor_light_pd0(uint8_t *src, uint8_t *src_ptr_2b, int
                                           int32_t bd) {
     const int32_t is_scaled = has_scale(subpel_params->xs, subpel_params->ys);
     // for super-res, the reference frame block might be 2x than predictor in maximum
+    // for reference scaling, it might be 4x since both width and height is scaled 2x
     // should pack enough buffer for scaled reference
-    DECLARE_ALIGNED(16, uint16_t, src16[PACKED_BUFFER_SIZE * 2]);
+    DECLARE_ALIGNED(16, uint16_t, src16[PACKED_BUFFER_SIZE * 4]);
     int32_t src_stride16;
     // pack the reference into temp 16bit buffer
-    uint8_t  offset      = INTERPOLATION_OFFSET;
-    uint32_t width_scale = 1;
-    if (is_scaled)
-        width_scale = 2; // super-res scale maximum 2x in width for reference
+    uint8_t  offset       = INTERPOLATION_OFFSET;
+    uint32_t width_scale  = 1;
+    uint32_t height_scale = 1;
+    if (is_scaled) {
+        width_scale  = subpel_params->xs != SCALE_SUBPEL_SHIFTS ? 2 : 1;
+        height_scale = subpel_params->ys != SCALE_SUBPEL_SHIFTS ? 2 : 1;
+    }
     // optimize stride from MAX_SB_SIZE to bwidth to minimum the block buffer size
     src_stride16 = w * width_scale + (offset << 1);
     // 16-byte align of src16
@@ -1422,7 +1426,7 @@ void svt_highbd_inter_predictor_light_pd0(uint8_t *src, uint8_t *src_ptr_2b, int
                src16,
                src_stride16,
                w * width_scale + (offset << 1),
-               h + (offset << 1));
+               h * height_scale + (offset << 1));
     uint16_t *src_10b = src16 + offset + (offset * src_stride16);
     uint16_t *dst16   = (uint16_t *)dst;
 
@@ -1460,16 +1464,20 @@ void svt_inter_predictor_light_pd1(uint8_t *src, uint8_t *src_2b, int32_t src_st
                                    int32_t bd) {
     const int32_t is_scaled = has_scale(subpel_params->xs, subpel_params->ys);
 
-    if (bd > EB_8BIT) {
+    if (bd > EB_EIGHT_BIT) {
         // for super-res, the reference frame block might be 2x than predictor in maximum
+        // for reference scaling, it might be 4x since both width and height is scaled 2x
         // should pack enough buffer for scaled reference
-        DECLARE_ALIGNED(16, uint16_t, src16[PACKED_BUFFER_SIZE * 2]);
+        DECLARE_ALIGNED(16, uint16_t, src16[PACKED_BUFFER_SIZE * 4]);
         int32_t src_stride16;
         // pack the reference into temp 16bit buffer
-        uint8_t  offset      = INTERPOLATION_OFFSET;
-        uint32_t width_scale = 1;
-        if (is_scaled)
-            width_scale = 2; // super-res scale maximum 2x in width for reference
+        uint8_t  offset       = INTERPOLATION_OFFSET;
+        uint32_t width_scale  = 1;
+        uint32_t height_scale = 1;
+        if (is_scaled) {
+            width_scale  = subpel_params->xs != SCALE_SUBPEL_SHIFTS ? 2 : 1;
+            height_scale = subpel_params->ys != SCALE_SUBPEL_SHIFTS ? 2 : 1;
+        }
         // optimize stride from MAX_SB_SIZE to bwidth to minimum the block buffer size
         src_stride16 = w * width_scale + (offset << 1);
         // 16-byte align of src16
@@ -1483,7 +1491,7 @@ void svt_inter_predictor_light_pd1(uint8_t *src, uint8_t *src_2b, int32_t src_st
                    src16,
                    src_stride16,
                    w * width_scale + (offset << 1),
-                   h + (offset << 1));
+                   h * height_scale + (offset << 1));
         uint16_t *src_10b = src16 + offset + (offset * src_stride16);
         uint16_t *dst16   = (uint16_t *)dst;
 
@@ -2504,8 +2512,7 @@ void build_masked_compound_no_round(uint8_t *dst, int dst_stride, const CONV_BUF
                                     int src0_stride, const CONV_BUF_TYPE *src1, int src1_stride,
                                     const InterInterCompoundData *const comp_data,
                                     uint8_t *seg_mask, BlockSize sb_type, int h, int w,
-                                    ConvolveParams *conv_params, uint8_t bit_depth,
-                                    EbBool is_16bit) {
+                                    ConvolveParams *conv_params, uint8_t bit_depth, Bool is_16bit) {
     // Derive subsampling from h and w passed in. May be refactored to
     // pass in subsampling factors directly.
     const int      subh = (2 << mi_size_high_log2[sb_type]) == h;
@@ -2710,12 +2717,6 @@ static const uint8_t obmc_mask_32[32] = {33, 35, 36, 38, 40, 41, 43, 44, 45, 47,
                                          50, 51, 52, 53, 55, 56, 57, 58, 59, 60, 60,
                                          61, 62, 64, 64, 64, 64, 64, 64, 64, 64};
 
-static const uint8_t obmc_mask_64[64] = {
-    33, 34, 35, 35, 36, 37, 38, 39, 40, 40, 41, 42, 43, 44, 44, 44, 45, 46, 47, 47, 48, 49,
-    50, 51, 51, 51, 52, 52, 53, 54, 55, 56, 56, 56, 57, 57, 58, 58, 59, 60, 60, 60, 60, 60,
-    61, 62, 62, 62, 62, 62, 63, 63, 63, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
-};
-
 const uint8_t *svt_av1_get_obmc_mask(int length) {
     switch (length) {
     case 1: return obmc_mask_1;
@@ -2724,7 +2725,6 @@ const uint8_t *svt_av1_get_obmc_mask(int length) {
     case 8: return obmc_mask_8;
     case 16: return obmc_mask_16;
     case 32: return obmc_mask_32;
-    case 64: return obmc_mask_64;
     default: assert(0); return NULL;
     }
 }

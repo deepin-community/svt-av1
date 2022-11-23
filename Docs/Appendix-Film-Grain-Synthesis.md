@@ -1,6 +1,8 @@
+[Top level](../README.md)
+
 # Film Grain Synthesis Appendix
 
-## 1.  Description of the algorithm
+## 1. Description of the algorithm
 
 The film grain synthesis algorithm involves two key steps. In the first
 step, the input pictures are denoised and the resulting denoised version
@@ -39,29 +41,29 @@ between the input picture and its denoised version, in the areas that
 are identified as suitable areas to include in the noise model
 estimation process, as outlined above. An autoregressive model driven by
 a unit variance Gaussian noise is used to model the film grain. The
-model is defined over a causal neighborhood of lag L around the current
-pixel at position (x,y):
+model is defined over a causal neighborhood of lag $`L`$ around the current
+pixel at position $`(x,y)`$:
 
-![math](http://latex.codecogs.com/gif.latex?n(x,y)) ![math](http://latex.codecogs.com/gif.latex?=a_{0}n(x-2,y-2)+a_{1}n(x-1,y-2)+a_{2}n(x,y-2)+...+a_{N}n(x-1,y)+z)
+$`n(x,y) =a_{0}n(x-2,y-2)+a_{1}n(x-1,y-2)+a_{2}n(x,y-2)+...+a_{N}n(x-1,y)+z`$
 
-where n refers to the film grain, z is unit variance Gaussian noise and
-N=2L(L+1). The same set of unit variance Gaussian noise samples that
+where $`n`$ refers to the film grain, $`z`$ is unit variance Gaussian noise and
+$`N=2L(L+1)`$. The same set of unit variance Gaussian noise samples that
 would drive the film grain model are stored at both the encoder and
-decoder sides. N can take values from 0 to 3.
+decoder sides. $`N`$ can take values from $`0`$ to $`3`$.
 
 To account for film gain strength, samples in the reconstructed image
 are adjusted as follows:
 
-Y’(x,y) = Y(x,y) + f(Y)\*n(x,y)
+$`Y’(x,y) = Y(x,y) + f(Y)*n(x,y)`$
 
 where:
 
-  - Y’(x,y) is the luma sample value after addition of film grain
+  - $`Y’(x,y)`$ is the luma sample value after addition of film grain
 
-  - Y(x,y) is the luma sample value before the addition of the film
+  - $`Y(x,y)`$ is the luma sample value before the addition of the film
     grain sample
 
-  - f(Y(x,y)) is the scaling function that adjusts the value of the film
+  - $`f(Y(x,y))`$ is the scaling function that adjusts the value of the film
     grain as a function of the luma value of the sample in the
     reconstructed picture. A similar operation is performed for the
     chroma samples.
@@ -74,12 +76,11 @@ The chroma film grain scaling is based on the linear combination of the
 corresponding luma and chroma value to account for the luma effect on
 the chroma grain:
 
-![math](http://latex.codecogs.com/gif.latex?Cb'=Cb+\mathit{f}(u)G_{cb}),
+$`Cb'=Cb+\mathit{f}(u)G_{cb}`$,
 
-![math](http://latex.codecogs.com/gif.latex?u=b_{Cb}Cb+d_{Cb}Y_{av}+h),
+$`u=b_{Cb}Cb+d_{Cb}Y_{av}+h`$,
 
-where *u* is the index into the look-up table that corresponds to a Cb
-component scaling function.
+where $`\textbf{u}`$ is the index into the look-up table that corresponds to a Cb component scaling function.
 
 **Re-noising at the decoder side**
 
@@ -109,7 +110,7 @@ An optional block overlap can be applied to the film grain as well. The
 block overlap attenuates potential artifacts at the film grain block
 boundaries.
 
-## 2.  Implementation of the algorithm
+## 2. Implementation of the algorithm
 
 **Inputs**:
 
@@ -131,7 +132,7 @@ The control flags for the film grain feature are summarized in Table 1.
 | ------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | film\_grain\_denoise\_strength | Sequence                     | Takes values from 0 to 50 and determines strength of film grain used in grain filtering and estimation. 0 – film grain is turned off, 50 – maximum strength. |
 | film\_grain\_params            | Picture                      | Film grain parameters for a reference frame                                                                                                                  |
-| apply\_grain               | Picture                      | Apply grain for to the current frame.                                                                                                                        |
+| apply\_grain                   | Picture                      | Apply grain for to the current frame.                                                                                                                        |
 
 **Details of the film grain parameters estimation**
 
@@ -191,7 +192,7 @@ intermediateBuffer, which follows by the output process.
 The film grain application is performed by the
 ```svt_av1_add_film_grain_run``` in grainSynthesis.c.
 
-## 3.  Optimization of the algorithm
+## 3. Optimization of the algorithm
 
 The algorithm is implemented in a parallel manner. This means that
 estimation of the film grain parameters is performed independently
@@ -208,7 +209,7 @@ worse denoising and consequently less accurate film grain parameter
 estimation, but makes parallelization easier since only the current
 frame is used to obtain the film grain parameters.
 
-## 4.  Signaling
+## 4. Signaling
 
 The signaling part of the film grain parameters algorithm is
 implemented as follows. The film grain is called from
@@ -269,7 +270,11 @@ to the bitstream.
 
 ## Notes
 
-The feature settings that are described in this document were compiled at v0.9.0 of the code and may not reflect the current status of the code. The description in this document represents an example showing  how features would interact with the SVT architecture. For the most up-to-date settings, it's recommended to review the section of the code implementing this feature.
+The feature settings that are described in this document were compiled at
+v1.3.0 of the code and may not reflect the current status of the code. The
+description in this document represents an example showing how features would
+interact with the SVT architecture. For the most up-to-date settings, it's
+recommended to review the section of the code implementing this feature.
 
 ## References
 

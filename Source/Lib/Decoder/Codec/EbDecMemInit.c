@@ -46,7 +46,7 @@
 EbErrorType dec_eb_recon_picture_buffer_desc_ctor(
     EbPtr  *object_dbl_ptr,
     EbPtr   object_init_data_ptr,
-    EbBool is_16bit_pipeline /* can be removed as an extra argument once
+    Bool is_16bit_pipeline /* can be removed as an extra argument once
                                 EbPictureBufferDescInitData adds the support for this */
 )
 {
@@ -55,7 +55,7 @@ EbErrorType dec_eb_recon_picture_buffer_desc_ctor(
 
     EB_MALLOC_DEC(EbPictureBufferDesc*, picture_buffer_desc_ptr, sizeof(EbPictureBufferDesc), EB_N_PTR);
 
-    uint32_t bytes_per_pixel = (picture_buffer_desc_init_data_ptr->bit_depth > EB_8BIT ||
+    uint32_t bytes_per_pixel = (picture_buffer_desc_init_data_ptr->bit_depth > EB_EIGHT_BIT ||
         is_16bit_pipeline) ? 2 : 1;
     picture_buffer_desc_ptr->is_16bit_pipeline = is_16bit_pipeline;
 
@@ -96,7 +96,7 @@ EbErrorType dec_eb_recon_picture_buffer_desc_ctor(
     picture_buffer_desc_ptr->stride_cb = picture_buffer_desc_ptr->stride_cr = stride_c;
     picture_buffer_desc_ptr->chroma_size = (stride_c * height_c);
 
-    picture_buffer_desc_ptr->packed_flag = EB_FALSE;
+    picture_buffer_desc_ptr->packed_flag = FALSE;
 
     picture_buffer_desc_ptr->stride_bit_inc_y = 0;
     picture_buffer_desc_ptr->stride_bit_inc_cb = 0;
@@ -137,7 +137,7 @@ static EbErrorType init_main_frame_ctxt(EbDecHandle  *dec_handle_ptr) {
     MainFrameBuf  *main_frame_buf = &dec_handle_ptr->main_frame_buf;
     SeqHeader   *seq_header = &dec_handle_ptr->seq_header;
 
-    EbBool is_st = dec_handle_ptr->dec_config.threads == 1 ? EB_TRUE : EB_FALSE;
+    Bool is_st = dec_handle_ptr->dec_config.threads == 1 ? TRUE : FALSE;
     ///* 8x8 alignment for various tools like CDEF */
     //int32_t aligned_width   = ALIGN_POWER_OF_TWO(seq_header->max_frame_width, 3);
     //int32_t aligned_height  = ALIGN_POWER_OF_TWO(seq_header->max_frame_height, 3);
@@ -365,12 +365,12 @@ EbErrorType init_dec_mod_ctxt(EbDecHandle  *dec_handle_ptr,
         (color_config->subsampling_x ? y_size >> 2 : y_size) +
         (color_config->subsampling_y ? y_size >> 2 : y_size);
 
-    EB_MALLOC_DEC(int32_t*, p_dec_mod_ctxt->sb_iquant_ptr,
+    EB_ALLIGN_MALLOC_DEC(int32_t*, p_dec_mod_ctxt->sb_iquant_ptr,
         iq_size * sizeof(int32_t), EB_N_PTR);
     av1_inverse_qm_init(p_dec_mod_ctxt, seq_header);
 
     EbColorConfig *cc = &dec_handle_ptr->seq_header.color_config;
-    uint32_t use_highbd = (cc->bit_depth > EB_8BIT ||
+    uint32_t use_highbd = (cc->bit_depth > EB_EIGHT_BIT ||
         dec_handle_ptr->is_16bit_pipeline);
     int32_t sb_size = 1 << sb_size_log2;
     uint16_t *hbd_mc_buf[2];
@@ -436,7 +436,7 @@ static EbErrorType init_lr_ctxt(EbDecHandle  *dec_handle_ptr)
     int32_t sb_size_h = block_size_high[dec_handle_ptr->seq_header.sb_size];
     uint32_t picture_height_in_sb = (dec_handle_ptr->seq_header.
         max_frame_height + sb_size_h - 1) / sb_size_h;
-    EbBool is_mt = dec_handle_ptr->dec_config.threads > 1;
+    Bool is_mt = dec_handle_ptr->dec_config.threads > 1;
 
     picture_height_in_sb = (is_mt == 0) ? 1 : picture_height_in_sb;
     const int32_t num_planes = av1_num_planes(&dec_handle_ptr->seq_header.
@@ -445,9 +445,9 @@ static EbErrorType init_lr_ctxt(EbDecHandle  *dec_handle_ptr)
     uint32_t num_instances = MIN(picture_height_in_sb,
         dec_handle_ptr->dec_config.threads);
 
-    lr_ctxt->is_thread_min = EB_FALSE;
+    lr_ctxt->is_thread_min = FALSE;
     if (num_instances == dec_handle_ptr->dec_config.threads)
-        lr_ctxt->is_thread_min = EB_TRUE;
+        lr_ctxt->is_thread_min = TRUE;
     EB_MALLOC_DEC(RestorationLineBuffers ***, lr_ctxt->rlbs,
         num_instances * sizeof(RestorationLineBuffers**), EB_N_PTR);
     EB_MALLOC_DEC(int32_t **, lr_ctxt->rst_tmpbuf,
@@ -474,7 +474,7 @@ static EbErrorType init_lr_ctxt(EbDecHandle  *dec_handle_ptr)
     // Allocate memory for Deblocked line buffer around stripe(64) boundary for a frame
     const int ext_h = RESTORATION_UNIT_OFFSET + frame_height;
     const int num_stripes = (ext_h + 63) / 64;
-    int use_highbd = (dec_handle_ptr->seq_header.color_config.bit_depth > EB_8BIT ||
+    int use_highbd = (dec_handle_ptr->seq_header.color_config.bit_depth > EB_EIGHT_BIT ||
         dec_handle_ptr->is_16bit_pipeline);
 
     for (int plane = 0; plane < num_planes; plane++)

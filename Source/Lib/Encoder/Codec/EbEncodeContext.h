@@ -45,8 +45,6 @@
 // RC Groups: They should be a power of 2, so we can replace % by &.
 // Instead of using x % y, we use x && (y-1)
 #define PARALLEL_GOP_MAX_NUMBER 256
-#define RC_GROUP_IN_GOP_MAX_NUMBER 512
-#define PICTURE_IN_RC_GROUP_MAX_NUMBER 64
 
 typedef struct DpbDependentList {
     int32_t  list[1 << MAX_TEMPORAL_LAYERS];
@@ -59,9 +57,9 @@ typedef struct DPBInfo {
     int32_t          dep_list0_count;
     int32_t          dep_list1_count;
     uint8_t          temporal_layer_index;
-    EbBool           is_displayed;
-    EbBool           is_used;
-    EbBool           is_alt_ref;
+    Bool             is_displayed;
+    Bool             is_used;
+    Bool             is_alt_ref;
     DpbDependentList dep_list0;
     DpbDependentList dep_list1;
 } DPBInfo;
@@ -71,6 +69,29 @@ typedef struct FirstPassStatsOut {
     size_t           size;
     size_t           capability;
 } FirstPassStatsOut;
+
+typedef struct RateControlIntervalParamContext {
+    EbDctor  dctor;
+    uint64_t first_poc;
+    // Projected total bits available for a key frame group of frames
+    int64_t kf_group_bits;
+    // Error score of frames still to be coded in kf group
+    int64_t kf_group_error_left;
+    uint8_t end_of_seq_seen;
+    int32_t processed_frame_number;
+    int32_t size;
+    uint8_t last_i_qp;
+    int64_t vbr_bits_off_target;
+    int64_t vbr_bits_off_target_fast;
+    int     rolling_target_bits;
+    int     rolling_actual_bits;
+    int     rate_error_estimate;
+    int64_t total_actual_bits;
+    int64_t total_target_bits;
+    int     extend_minq;
+    int     extend_maxq;
+    int     extend_minq_fast;
+} RateControlIntervalParamContext;
 
 typedef struct EncodeContext {
     EbDctor dctor;
@@ -137,25 +158,25 @@ typedef struct EncodeContext {
     uint32_t pred_struct_position; // Current position within a prediction structure
     uint32_t elapsed_non_idr_count;
     uint32_t elapsed_non_cra_count;
-    EbBool   initial_picture;
+    Bool     initial_picture;
     uint64_t last_idr_picture; // the most recently occured IDR picture (in decode order)
 
     // Sequence Termination Flags
     uint64_t terminating_picture_number;
-    EbBool   terminating_sequence_flag_received;
+    Bool     terminating_sequence_flag_received;
 
     // Signalling the need for a td structure to be written in the Bitstream - only used in the PK process so no need for a mutex
-    EbBool td_needed;
+    Bool td_needed;
 
     // Prediction Structure
     PredictionStructureGroup *prediction_structure_group_ptr;
 
     // Speed Control
-    int64_t   sc_buffer;
-    int64_t   sc_frame_in;
-    int64_t   sc_frame_out;
-    EbHandle  sc_buffer_mutex;
-    EbEncMode enc_mode;
+    int64_t  sc_buffer;
+    int64_t  sc_frame_in;
+    int64_t  sc_frame_out;
+    EbHandle sc_buffer_mutex;
+    EncMode  enc_mode;
 
     // Rate Control
     uint32_t previous_selected_ref_qp;
@@ -173,8 +194,8 @@ typedef struct EncodeContext {
     //DPB list management
     DPBInfo              dpb_list[REF_FRAMES];
     uint64_t             display_picture_number;
-    EbBool               is_mini_gop_changed;
-    EbBool               is_i_slice_in_last_mini_gop;
+    Bool                 is_mini_gop_changed;
+    Bool                 is_i_slice_in_last_mini_gop;
     uint64_t             i_slice_picture_number_in_last_mini_gop;
     uint64_t             poc_map_idx[MAX_TPL_LA_SW];
     EbPictureBufferDesc *mc_flow_rec_picture_buffer[MAX_TPL_LA_SW];
@@ -183,9 +204,7 @@ typedef struct EncodeContext {
     TwoPassCfg           two_pass_cfg; // two pass datarate control
     RATE_CONTROL         rc;
     RateControlCfg       rc_cfg;
-    GF_GROUP             gf_group;
-    KeyFrameCfg          kf_cfg;
-    GFConfig             gf_cfg;
+    SwitchFrameCfg       sf_cfg;
     FIRSTPASS_STATS     *frame_stats_buffer;
     // Number of stats buffers required for look ahead
     int               num_lap_buffers;
@@ -195,9 +214,14 @@ typedef struct EncodeContext {
     RecodeLoopType    recode_loop;
     // This feature controls the tolerence vs target used in deciding whether to
     // recode a frame. It has no meaning if recode is disabled.
-    int      recode_tolerance;
-    int32_t  frame_updated;
-    EbHandle frame_updated_mutex;
+    int                               recode_tolerance;
+    int32_t                           frame_updated;
+    EbHandle                          frame_updated_mutex;
+    RateControlIntervalParamContext **rc_param_queue;
+    int32_t                           rc_param_queue_head_index;
+    EbHandle                          rc_param_queue_mutex;
+    // reference scaling random access event
+    EbRefFrameScale resize_evt;
 } EncodeContext;
 
 typedef struct EncodeContextInitData {

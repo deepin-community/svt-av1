@@ -168,32 +168,37 @@ typedef struct MemMapFile {
     int32_t  align_mask; //page size alignment mask
     int32_t  fd; //file descriptor
     int64_t  y4m_seq_hdr; //y4m seq length
-    uint32_t y4m_frm_hdr; //y4m frame length
+    size_t   y4m_frm_hdr; //y4m frame length
     uint64_t file_frame_it; //frame iterator within the input file
 } MemMapFile;
+
+// list of frames that are forced to be key frames
+// pairs with force_key_frames
+struct forced_key_frames {
+    char    **specifiers; // list of specifiers to use to convert into frames
+    uint64_t *frames;
+    size_t    count;
+};
 
 typedef struct EbConfig {
     /****************************************
      * File I/O
      ****************************************/
-    FILE      *config_file;
     FILE      *input_file;
     MemMapFile mmap; //memory mapped file handler
-    EbBool     input_file_is_fifo;
+    Bool       input_file_is_fifo;
     FILE      *bitstream_file;
     FILE      *recon_file;
     FILE      *error_log_file;
     FILE      *stat_file;
-    FILE      *buffer_file;
     FILE      *qp_file;
     /* two pass */
-    const char   *stats;
-    FILE         *input_stat_file;
-    FILE         *output_stat_file;
-    FILE         *input_pred_struct_file;
-    char         *input_pred_struct_filename;
-    EbBool        y4m_input;
-    unsigned char y4m_buf[9];
+    const char *stats;
+    FILE       *input_stat_file;
+    FILE       *output_stat_file;
+    char       *input_pred_struct_filename;
+    Bool        y4m_input;
+    char        y4m_buf[9];
 
     uint8_t progress; // 0 = no progress output, 1 = normal, 2 = aomenc style verbose progress
     /****************************************
@@ -214,23 +219,18 @@ typedef struct EbConfig {
     uint32_t injector;
     uint32_t speed_control_flag;
 
-    uint32_t hme_level0_column_index;
-    uint32_t hme_level0_row_index;
-    uint32_t hme_level1_column_index;
-    uint32_t hme_level1_row_index;
-    uint32_t hme_level2_column_index;
-    uint32_t hme_level2_row_index;
-    EbBool   stop_encoder; // to signal CTRL+C Event, need to stop encoding.
+    Bool stop_encoder; // to signal CTRL+C Event, need to stop encoding.
 
     uint64_t processed_frame_count;
     uint64_t processed_byte_count;
 
-    uint64_t byte_count_since_ivf;
     uint64_t ivf_count;
+
+    struct forced_key_frames forced_keyframes;
     /****************************************
      * On-the-fly Testing
      ****************************************/
-    EbBool eos_flag;
+    Bool eos_flag;
 
     EbSvtAv1EncConfiguration config;
 } EbConfig;
@@ -243,7 +243,7 @@ typedef struct EncChannel {
     AppExitConditionType exit_cond_recon; // Processing loop exit condition
     AppExitConditionType exit_cond_input; // Processing loop exit condition
     AppExitConditionType exit_cond; // Processing loop exit condition
-    EbBool               active;
+    Bool                 active;
 } EncChannel;
 
 typedef enum MultiPassModes {
@@ -265,8 +265,7 @@ EbErrorType     read_command_line(int32_t argc, char *const argv[], EncChannel *
 int             get_version(int argc, char *argv[]);
 extern uint32_t get_help(int32_t argc, char *const argv[]);
 extern uint32_t get_number_of_channels(int32_t argc, char *const argv[]);
-uint32_t        get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_PASS],
-                           MultiPassModes *multi_pass_mode);
+uint32_t        get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_PASS]);
 EbErrorType handle_stats_file(EbConfig *config, EncPass pass, const SvtAv1FixedBuf *rc_stats_buffer,
                               uint32_t channel_number);
 #endif //EbAppConfig_h

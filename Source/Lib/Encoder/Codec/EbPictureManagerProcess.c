@@ -55,24 +55,24 @@ void largest_coding_unit_dctor(EbPtr p);
   ************************************************/
 static void configure_picture_edges(SequenceControlSet *scs_ptr, PictureControlSet *ppsPtr) {
     // Tiles Initialisation
-    const uint16_t pic_width_in_sb = (ppsPtr->parent_pcs_ptr->aligned_width + scs_ptr->sb_size_pix -
+    const uint16_t pic_width_in_sb = (ppsPtr->parent_pcs_ptr->aligned_width + scs_ptr->sb_size -
                                       1) /
-        scs_ptr->sb_size_pix;
+        scs_ptr->sb_size;
     const uint16_t picture_height_in_sb = (ppsPtr->parent_pcs_ptr->aligned_height +
-                                           scs_ptr->sb_size_pix - 1) /
-        scs_ptr->sb_size_pix;
+                                           scs_ptr->sb_size - 1) /
+        scs_ptr->sb_size;
     unsigned x_sb_index, y_sb_index, sb_index;
 
     // SB-loops
     for (y_sb_index = 0; y_sb_index < picture_height_in_sb; ++y_sb_index) {
         for (x_sb_index = 0; x_sb_index < pic_width_in_sb; ++x_sb_index) {
             sb_index = (uint16_t)(x_sb_index + y_sb_index * pic_width_in_sb);
-            ppsPtr->sb_ptr_array[sb_index]->picture_left_edge_flag = (x_sb_index == 0) ? EB_TRUE
-                                                                                       : EB_FALSE;
-            ppsPtr->sb_ptr_array[sb_index]->picture_top_edge_flag  = (y_sb_index == 0) ? EB_TRUE
-                                                                                       : EB_FALSE;
+            ppsPtr->sb_ptr_array[sb_index]->picture_left_edge_flag = (x_sb_index == 0) ? TRUE
+                                                                                       : FALSE;
+            ppsPtr->sb_ptr_array[sb_index]->picture_top_edge_flag  = (y_sb_index == 0) ? TRUE
+                                                                                       : FALSE;
             ppsPtr->sb_ptr_array[sb_index]->picture_right_edge_flag =
-                (x_sb_index == (unsigned)(pic_width_in_sb - 1)) ? EB_TRUE : EB_FALSE;
+                (x_sb_index == (unsigned)(pic_width_in_sb - 1)) ? TRUE : FALSE;
         }
     }
 
@@ -211,14 +211,13 @@ void copy_dep_cnt_cleaning_list(EncodeContext *ctx, PictureParentControlSet *pcs
 }
 
 void init_enc_dec_segement(PictureParentControlSet *parentpicture_control_set_ptr) {
-    SequenceControlSet *scs_ptr = (SequenceControlSet *)
-                                      parentpicture_control_set_ptr->scs_wrapper_ptr->object_ptr;
-    uint8_t pic_width_in_sb      = (uint8_t)((parentpicture_control_set_ptr->aligned_width +
-                                         scs_ptr->sb_size_pix - 1) /
-                                        scs_ptr->sb_size_pix);
-    uint8_t picture_height_in_sb = (uint8_t)((parentpicture_control_set_ptr->aligned_height +
-                                              scs_ptr->sb_size_pix - 1) /
-                                             scs_ptr->sb_size_pix);
+    SequenceControlSet *scs_ptr         = parentpicture_control_set_ptr->scs_ptr;
+    uint8_t             pic_width_in_sb = (uint8_t)((parentpicture_control_set_ptr->aligned_width +
+                                         scs_ptr->sb_size - 1) /
+                                        scs_ptr->sb_size);
+    uint8_t picture_height_in_sb        = (uint8_t)((parentpicture_control_set_ptr->aligned_height +
+                                              scs_ptr->sb_size - 1) /
+                                             scs_ptr->sb_size);
     set_tile_info(parentpicture_control_set_ptr);
     int      sb_size_log2 = scs_ptr->seq_header.sb_size_log2;
     uint32_t enc_dec_seg_col_cnt =
@@ -302,10 +301,10 @@ void init_enc_dec_segement(PictureParentControlSet *parentpicture_control_set_pt
                 for (uint16_t d = top_left_tile_col_idx; d < bottom_right_tile_col_idx; d++) {
                     uint16_t tileIdx = s * tile_cols + d;
                     parentpicture_control_set_ptr->child_pcs->entropy_coding_info[tileIdx]
-                        ->entropy_coding_tile_done = EB_FALSE;
+                        ->entropy_coding_tile_done = FALSE;
                 }
             }
-            parentpicture_control_set_ptr->child_pcs->entropy_coding_pic_reset_flag = EB_TRUE;
+            parentpicture_control_set_ptr->child_pcs->entropy_coding_pic_reset_flag = TRUE;
         }
     }
 }
@@ -317,15 +316,14 @@ void superres_setup_child_pcs(SequenceControlSet      *entry_scs_ptr,
     uint8_t pic_width_in_sb;
     uint8_t picture_height_in_sb;
 
-    child_pcs_ptr->sb_total_count = entry_pcs_ptr->sb_total_count;
+    child_pcs_ptr->b64_total_count = entry_pcs_ptr->b64_total_count;
 
-    pic_width_in_sb = (uint8_t)((entry_pcs_ptr->aligned_width + entry_scs_ptr->sb_size_pix - 1) /
-                                entry_scs_ptr->sb_size_pix);
-    picture_height_in_sb = (uint8_t)((entry_pcs_ptr->aligned_height + entry_scs_ptr->sb_size_pix -
-                                      1) /
-                                     entry_scs_ptr->sb_size_pix);
+    pic_width_in_sb      = (uint8_t)((entry_pcs_ptr->aligned_width + entry_scs_ptr->sb_size - 1) /
+                                entry_scs_ptr->sb_size);
+    picture_height_in_sb = (uint8_t)((entry_pcs_ptr->aligned_height + entry_scs_ptr->sb_size - 1) /
+                                     entry_scs_ptr->sb_size);
 
-    child_pcs_ptr->sb_total_count_pix = pic_width_in_sb * picture_height_in_sb;
+    child_pcs_ptr->sb_total_count = pic_width_in_sb * picture_height_in_sb;
 
     //if (entry_pcs_ptr->frame_superres_enabled)
     {
@@ -333,12 +331,12 @@ void superres_setup_child_pcs(SequenceControlSet      *entry_scs_ptr,
         uint16_t sb_index;
         uint16_t sb_origin_x = 0;
         uint16_t sb_origin_y = 0;
-        for (sb_index = 0; sb_index < child_pcs_ptr->sb_total_count_pix; ++sb_index) {
+        for (sb_index = 0; sb_index < child_pcs_ptr->sb_total_count; ++sb_index) {
             largest_coding_unit_dctor(child_pcs_ptr->sb_ptr_array[sb_index]);
             largest_coding_unit_ctor(child_pcs_ptr->sb_ptr_array[sb_index],
-                                     (uint8_t)entry_scs_ptr->sb_size_pix,
-                                     (uint16_t)(sb_origin_x * entry_scs_ptr->sb_size_pix),
-                                     (uint16_t)(sb_origin_y * entry_scs_ptr->sb_size_pix),
+                                     (uint8_t)entry_scs_ptr->sb_size,
+                                     (uint16_t)(sb_origin_x * entry_scs_ptr->sb_size),
+                                     (uint16_t)(sb_origin_y * entry_scs_ptr->sb_size),
                                      (uint16_t)sb_index,
                                      child_pcs_ptr->enc_mode,
                                      entry_scs_ptr->max_block_cnt,
@@ -350,7 +348,7 @@ void superres_setup_child_pcs(SequenceControlSet      *entry_scs_ptr,
     }
 
     // Update pcs_ptr->mi_stride
-    child_pcs_ptr->mi_stride = pic_width_in_sb * (entry_scs_ptr->sb_size_pix >> MI_SIZE_LOG2);
+    child_pcs_ptr->mi_stride = pic_width_in_sb * (entry_scs_ptr->sb_size >> MI_SIZE_LOG2);
 
     // init segment since picture scaled
     init_enc_dec_segement(entry_pcs_ptr);
@@ -427,7 +425,7 @@ void *picture_manager_kernel(void *input_ptr) {
     EbObjectWrapper     *input_picture_demux_wrapper_ptr;
     PictureDemuxResults *input_picture_demux_ptr;
 
-    EbBool availability_flag;
+    Bool availability_flag;
 
     PredictionStructureEntry *pred_position_ptr;
     InputQueueEntry          *input_entry_ptr;
@@ -461,7 +459,7 @@ void *picture_manager_kernel(void *input_ptr) {
         case EB_PIC_SUPERRES_INPUT: {
             pcs_ptr = (PictureParentControlSet *)
                           input_picture_demux_ptr->pcs_wrapper_ptr->object_ptr;
-            scs_ptr = (SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr;
+            scs_ptr = pcs_ptr->scs_ptr;
 
             assert(scs_ptr->static_config.superres_mode == SUPERRES_QTHRESH ||
                    scs_ptr->static_config.superres_mode == SUPERRES_AUTO);
@@ -488,14 +486,16 @@ void *picture_manager_kernel(void *input_ptr) {
 
             pcs_ptr = (PictureParentControlSet *)
                           input_picture_demux_ptr->pcs_wrapper_ptr->object_ptr;
-            scs_ptr            = (SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr;
+            scs_ptr            = pcs_ptr->scs_ptr;
             encode_context_ptr = scs_ptr->encode_context_ptr;
 
             //SVT_LOG("\nPicture Manager Process @ %d \n ", pcs_ptr->picture_number);
             pred_position_ptr =
                 pcs_ptr->pred_struct_ptr->pred_struct_entry_ptr_array[pcs_ptr->pred_struct_index];
 
-            copy_dep_cnt_cleaning_list(encode_context_ptr, pcs_ptr);
+            // overlay dep is counted by alt-ref, does not copy to cleaning list
+            if (!pcs_ptr->is_overlay)
+                copy_dep_cnt_cleaning_list(encode_context_ptr, pcs_ptr);
 
             clean_pictures_in_ref_queue(encode_context_ptr);
 
@@ -542,13 +542,13 @@ void *picture_manager_kernel(void *input_ptr) {
                 reference_entry_ptr->ref_wraper =
                     pcs_ptr
                         ->reference_picture_wrapper_ptr; //at this time only the src data is valid
-                reference_entry_ptr->release_enable            = EB_TRUE;
-                reference_entry_ptr->reference_available       = EB_FALSE;
+                reference_entry_ptr->release_enable            = TRUE;
+                reference_entry_ptr->reference_available       = FALSE;
                 reference_entry_ptr->slice_type                = pcs_ptr->slice_type;
                 reference_entry_ptr->temporal_layer_index      = pcs_ptr->temporal_layer_index;
-                reference_entry_ptr->frame_context_updated     = EB_FALSE;
+                reference_entry_ptr->frame_context_updated     = FALSE;
                 reference_entry_ptr->is_alt_ref                = pcs_ptr->is_alt_ref;
-                reference_entry_ptr->feedback_arrived          = EB_FALSE;
+                reference_entry_ptr->feedback_arrived          = FALSE;
                 reference_entry_ptr->is_used_as_reference_flag = pcs_ptr->is_used_as_reference_flag;
                 encode_context_ptr->reference_picture_queue_tail_index =
                     (encode_context_ptr->reference_picture_queue_tail_index ==
@@ -590,7 +590,7 @@ void *picture_manager_kernel(void *input_ptr) {
 
         case EB_PIC_REFERENCE:
 
-            scs_ptr = (SequenceControlSet *)input_picture_demux_ptr->scs_wrapper_ptr->object_ptr;
+            scs_ptr            = input_picture_demux_ptr->scs_ptr;
             encode_context_ptr = scs_ptr->encode_context_ptr;
             clean_pictures_in_ref_queue(scs_ptr->encode_context_ptr);
             ((EbReferenceObject *)
@@ -615,7 +615,7 @@ void *picture_manager_kernel(void *input_ptr) {
                         input_picture_demux_ptr->reference_picture_wrapper_ptr;
 
                     // Set the reference availability
-                    reference_entry_ptr->reference_available = EB_TRUE;
+                    reference_entry_ptr->reference_available = TRUE;
                 }
 
                 // Increment the reference_queue_index Iterator
@@ -630,14 +630,9 @@ void *picture_manager_kernel(void *input_ptr) {
                 (reference_entry_ptr->picture_number == input_picture_demux_ptr->picture_number),
                 encode_context_ptr->app_callback_ptr,
                 EB_ENC_PM_ERROR8);
-
-            //keep the relase of SCS here because we still need the encodeContext strucutre here
-            // Release the Reference's SequenceControlSet
-            svt_release_object(input_picture_demux_ptr->scs_wrapper_ptr);
-
             break;
         case EB_PIC_FEEDBACK:
-            scs_ptr = (SequenceControlSet *)input_picture_demux_ptr->scs_wrapper_ptr->object_ptr;
+            scs_ptr            = input_picture_demux_ptr->scs_ptr;
             encode_context_ptr = scs_ptr->encode_context_ptr;
 
             clean_pictures_in_ref_queue(scs_ptr->encode_context_ptr);
@@ -649,8 +644,8 @@ void *picture_manager_kernel(void *input_ptr) {
                 if (reference_entry_ptr->picture_number ==
                     input_picture_demux_ptr->picture_number) {
                     // Set the feedback arrived
-                    reference_entry_ptr->feedback_arrived      = EB_TRUE;
-                    reference_entry_ptr->frame_context_updated = EB_TRUE;
+                    reference_entry_ptr->feedback_arrived      = TRUE;
+                    reference_entry_ptr->frame_context_updated = TRUE;
                 }
                 // Increment the reference_queue_index Iterator
                 reference_queue_index = (reference_queue_index == REFERENCE_QUEUE_MAX_DEPTH - 1)
@@ -663,15 +658,9 @@ void *picture_manager_kernel(void *input_ptr) {
             // Update the last decode order
             if (input_picture_demux_ptr->decode_order == decode_order)
                 decode_order++;
-
-            //keep the release of SCS here because we still need the encodeContext structure here
-            // Release the Reference's SequenceControlSet
-            svt_release_object(input_picture_demux_ptr->scs_wrapper_ptr);
-
             break;
         default:
-
-            scs_ptr = (SequenceControlSet *)input_picture_demux_ptr->scs_wrapper_ptr->object_ptr;
+            scs_ptr            = input_picture_demux_ptr->scs_ptr;
             encode_context_ptr = scs_ptr->encode_context_ptr;
 
             CHECK_REPORT_ERROR_NC(encode_context_ptr->app_callback_ptr, EB_ENC_PM_ERROR9);
@@ -695,18 +684,16 @@ void *picture_manager_kernel(void *input_ptr) {
                 if (input_entry_ptr->input_object_ptr != NULL) {
                     entry_pcs_ptr = (PictureParentControlSet *)
                                         input_entry_ptr->input_object_ptr->object_ptr;
-                    entry_scs_ptr = (SequenceControlSet *)
-                                        entry_pcs_ptr->scs_wrapper_ptr->object_ptr;
-
-                    availability_flag = EB_TRUE;
+                    entry_scs_ptr     = entry_pcs_ptr->scs_ptr;
+                    availability_flag = TRUE;
                     if (entry_pcs_ptr->decode_order != decode_order && (scs_ptr->enable_dec_order))
-                        availability_flag = EB_FALSE;
+                        availability_flag = FALSE;
 
                     //pic mgr starts pictures in dec order (no need to wait for feedback)
                     if (entry_scs_ptr->enable_pic_mgr_dec_order)
                         if (entry_pcs_ptr->picture_number > 0 &&
                             entry_pcs_ptr->decode_order != context_ptr->pmgr_dec_order + 1)
-                            availability_flag = EB_FALSE;
+                            availability_flag = FALSE;
                     // Check RefList0 Availability
                     for (uint8_t ref_idx = 0; ref_idx < entry_pcs_ptr->ref_list0_count; ++ref_idx) {
                         //if (entry_pcs_ptr->ref_list0_count)  // NM: to double check.
@@ -723,24 +710,24 @@ void *picture_manager_kernel(void *input_ptr) {
                                                                           ref_poc);
 
                             if (reference_entry_ptr != NULL) {
-                                availability_flag = (availability_flag == EB_FALSE)
-                                    ? EB_FALSE
+                                availability_flag = (availability_flag == FALSE)
+                                    ? FALSE
                                     : // Don't update if already False
                                     (scs_ptr->static_config.rate_control_mode &&
                                      entry_pcs_ptr->slice_type != I_SLICE &&
                                      entry_pcs_ptr->temporal_layer_index == 0 &&
                                      !reference_entry_ptr->feedback_arrived &&
                                      !encode_context_ptr->terminating_sequence_flag_received)
-                                    ? EB_FALSE
+                                    ? FALSE
                                     : (entry_pcs_ptr->frame_end_cdf_update_mode &&
                                        !reference_entry_ptr->frame_context_updated)
-                                    ? EB_FALSE
+                                    ? FALSE
                                     : (reference_entry_ptr->reference_available)
-                                    ? EB_TRUE
+                                    ? TRUE
                                     : // The Reference has been completed
-                                    EB_FALSE; // The Reference has not been completed
+                                    FALSE; // The Reference has not been completed
                             } else {
-                                availability_flag = EB_FALSE;
+                                availability_flag = FALSE;
                             }
                         }
                     }
@@ -761,8 +748,8 @@ void *picture_manager_kernel(void *input_ptr) {
                                         encode_context_ptr, ref_poc);
 
                                     if (reference_entry_ptr != NULL) {
-                                        availability_flag = (availability_flag == EB_FALSE)
-                                            ? EB_FALSE
+                                        availability_flag = (availability_flag == FALSE)
+                                            ? FALSE
                                             : // Don't update if already False
                                             (scs_ptr->static_config.rate_control_mode &&
                                              entry_pcs_ptr->slice_type != I_SLICE &&
@@ -770,24 +757,24 @@ void *picture_manager_kernel(void *input_ptr) {
                                              !reference_entry_ptr->feedback_arrived &&
                                              !encode_context_ptr
                                                   ->terminating_sequence_flag_received)
-                                            ? EB_FALSE
+                                            ? FALSE
                                             : (entry_pcs_ptr->frame_end_cdf_update_mode &&
                                                !reference_entry_ptr->frame_context_updated)
-                                            ? EB_FALSE
+                                            ? FALSE
                                             : (reference_entry_ptr->reference_available)
-                                            ? EB_TRUE
+                                            ? TRUE
                                             : // The Reference has been completed
-                                            EB_FALSE; // The Reference has not been completed
+                                            FALSE; // The Reference has not been completed
 
                                     } else {
-                                        availability_flag = EB_FALSE;
+                                        availability_flag = FALSE;
                                     }
                                 }
                             }
                         }
                     }
 
-                    if (availability_flag == EB_TRUE) {
+                    if (availability_flag == TRUE) {
                         // Get New  Empty recon-coef from recon-coef  Pool
                         svt_get_empty_object(context_ptr->recon_coef_fifo_ptr,
                                              &enc_dec_wrapper_ptr);
@@ -823,7 +810,7 @@ void *picture_manager_kernel(void *input_ptr) {
                         child_pcs_ptr->parent_pcs_ptr->av1_cm->child_pcs = child_pcs_ptr;
 
                         //2. Have some common information between  ChildPCS and ParentPCS.
-                        child_pcs_ptr->scs_wrapper_ptr      = entry_pcs_ptr->scs_wrapper_ptr;
+                        child_pcs_ptr->scs_ptr              = entry_pcs_ptr->scs_ptr;
                         child_pcs_ptr->picture_qp           = entry_pcs_ptr->picture_qp;
                         child_pcs_ptr->picture_number       = entry_pcs_ptr->picture_number;
                         child_pcs_ptr->slice_type           = entry_pcs_ptr->slice_type;
@@ -832,7 +819,7 @@ void *picture_manager_kernel(void *input_ptr) {
                         child_pcs_ptr->parent_pcs_ptr->total_num_bits = 0;
                         child_pcs_ptr->parent_pcs_ptr->picture_qp     = entry_pcs_ptr->picture_qp;
                         child_pcs_ptr->enc_mode                       = entry_pcs_ptr->enc_mode;
-                        child_pcs_ptr->sb_total_count = entry_pcs_ptr->sb_total_count;
+                        child_pcs_ptr->b64_total_count = entry_pcs_ptr->b64_total_count;
 
                         child_pcs_ptr->enc_dec_coded_sb_count = 0;
                         child_pcs_ptr->parent_pcs_ptr->av1_cm->rst_tmpbuf =
@@ -842,12 +829,12 @@ void *picture_manager_kernel(void *input_ptr) {
                         context_ptr->pmgr_dec_order = child_pcs_ptr->parent_pcs_ptr->decode_order;
                         //3.make all  init for ChildPCS
 
-                        pic_width_in_sb = (entry_pcs_ptr->aligned_width +
-                                           entry_scs_ptr->sb_size_pix - 1) /
-                            entry_scs_ptr->sb_size_pix;
+                        pic_width_in_sb = (entry_pcs_ptr->aligned_width + entry_scs_ptr->sb_size -
+                                           1) /
+                            entry_scs_ptr->sb_size;
                         picture_height_in_sb = (entry_pcs_ptr->aligned_height +
-                                                entry_scs_ptr->sb_size_pix - 1) /
-                            entry_scs_ptr->sb_size_pix;
+                                                entry_scs_ptr->sb_size - 1) /
+                            entry_scs_ptr->sb_size;
 
                         init_enc_dec_segement(entry_pcs_ptr);
 
@@ -860,26 +847,26 @@ void *picture_manager_kernel(void *input_ptr) {
                         uint32_t         x_sb_index, y_sb_index;
                         TileInfo         tile_info;
 
-                        child_pcs_ptr->sb_total_count_pix = pic_width_in_sb * picture_height_in_sb;
+                        child_pcs_ptr->sb_total_count = pic_width_in_sb * picture_height_in_sb;
 
                         // force re-ctor sb_ptr since child_pcs_ptrs are reused, and sb_ptr could be altered by superres tool when coding previous pictures
-                        if (scs_ptr->static_config.superres_mode > SUPERRES_NONE) {
+                        if (scs_ptr->static_config.superres_mode > SUPERRES_NONE ||
+                            scs_ptr->static_config.resize_mode > RESIZE_NONE) {
                             // Modify sb_prt_array in child pcs
                             uint16_t sb_index;
                             uint16_t sb_origin_x = 0;
                             uint16_t sb_origin_y = 0;
-                            for (sb_index = 0; sb_index < child_pcs_ptr->sb_total_count_pix;
+                            for (sb_index = 0; sb_index < child_pcs_ptr->sb_total_count;
                                  ++sb_index) {
                                 largest_coding_unit_dctor(child_pcs_ptr->sb_ptr_array[sb_index]);
-                                largest_coding_unit_ctor(
-                                    child_pcs_ptr->sb_ptr_array[sb_index],
-                                    (uint8_t)scs_ptr->sb_size_pix,
-                                    (uint16_t)(sb_origin_x * scs_ptr->sb_size_pix),
-                                    (uint16_t)(sb_origin_y * scs_ptr->sb_size_pix),
-                                    (uint16_t)sb_index,
-                                    child_pcs_ptr->enc_mode,
-                                    scs_ptr->max_block_cnt,
-                                    child_pcs_ptr);
+                                largest_coding_unit_ctor(child_pcs_ptr->sb_ptr_array[sb_index],
+                                                         (uint8_t)scs_ptr->sb_size,
+                                                         (uint16_t)(sb_origin_x * scs_ptr->sb_size),
+                                                         (uint16_t)(sb_origin_y * scs_ptr->sb_size),
+                                                         (uint16_t)sb_index,
+                                                         child_pcs_ptr->enc_mode,
+                                                         scs_ptr->max_block_cnt,
+                                                         child_pcs_ptr);
                                 // Increment the Order in coding order (Raster Scan Order)
                                 sb_origin_y = (sb_origin_x == pic_width_in_sb - 1) ? sb_origin_y + 1
                                                                                    : sb_origin_y;
@@ -887,15 +874,22 @@ void *picture_manager_kernel(void *input_ptr) {
                                     ? 0
                                     : sb_origin_x + 1;
                             }
+
+                            // reset input_frame16bit to align with enhanced_picture_ptr
+                            if (scs_ptr->static_config.encoder_bit_depth > EB_EIGHT_BIT) {
+                                copy_buffer_info(entry_pcs_ptr->enhanced_picture_ptr,
+                                                 child_pcs_ptr->input_frame16bit);
+                            }
                         }
 
                         // Update pcs_ptr->mi_stride
                         child_pcs_ptr->mi_stride = pic_width_in_sb *
-                            (scs_ptr->sb_size_pix >> MI_SIZE_LOG2);
+                            (scs_ptr->sb_size >> MI_SIZE_LOG2);
 
                         // copy buffer info from the downsampled picture to the input frame 16 bit buffer
-                        if (entry_pcs_ptr->frame_superres_enabled &&
-                            scs_ptr->static_config.encoder_bit_depth > EB_8BIT) {
+                        if ((entry_pcs_ptr->frame_superres_enabled ||
+                             entry_pcs_ptr->frame_resize_enabled) &&
+                            scs_ptr->static_config.encoder_bit_depth > EB_EIGHT_BIT) {
                             copy_buffer_info(entry_pcs_ptr->enhanced_downscaled_picture_ptr,
                                              child_pcs_ptr->input_frame16bit);
                         }
@@ -969,10 +963,10 @@ void *picture_manager_kernel(void *input_ptr) {
                                   REF_LIST_MAX_DEPTH * sizeof(uint8_t));
                         EB_MEMSET(child_pcs_ptr->ref_slice_type_array[REF_LIST_0],
                                   0,
-                                  REF_LIST_MAX_DEPTH * sizeof(EB_SLICE));
+                                  REF_LIST_MAX_DEPTH * sizeof(SliceType));
                         EB_MEMSET(child_pcs_ptr->ref_slice_type_array[REF_LIST_1],
                                   0,
-                                  REF_LIST_MAX_DEPTH * sizeof(EB_SLICE));
+                                  REF_LIST_MAX_DEPTH * sizeof(SliceType));
                         EB_MEMSET(child_pcs_ptr->ref_pic_r0[REF_LIST_0],
                                   0,
                                   REF_LIST_MAX_DEPTH * sizeof(double));
@@ -1049,6 +1043,20 @@ void *picture_manager_kernel(void *input_ptr) {
 
                                     // Decrement the Reference's dependent_count Count
                                     --reference_entry_ptr->dependent_count;
+
+#if DEBUG_SFRAME
+                                    if (scs_ptr->static_config.pass != ENC_FIRST_PASS) {
+                                        fprintf(stderr,
+                                                "\nframe %d, layer %d, ref-list-0 count %u, ref "
+                                                "frame %d, ref frame remain dep count %d\n",
+                                                (int)child_pcs_ptr->picture_number,
+                                                entry_pcs_ptr->temporal_layer_index,
+                                                entry_pcs_ptr->ref_list0_count,
+                                                (int)child_pcs_ptr->parent_pcs_ptr
+                                                    ->ref_pic_poc_array[REF_LIST_0][ref_idx],
+                                                reference_entry_ptr->dependent_count);
+                                    }
+#endif
 
                                     CHECK_REPORT_ERROR(
                                         (reference_entry_ptr->dependent_count != ~0u),
@@ -1138,6 +1146,20 @@ void *picture_manager_kernel(void *input_ptr) {
                                     // Decrement the Reference's dependent_count Count
                                     --reference_entry_ptr->dependent_count;
 
+#if DEBUG_SFRAME
+                                    if (scs_ptr->static_config.pass != ENC_FIRST_PASS) {
+                                        fprintf(stderr,
+                                                "\nframe %d, layer %d, ref-list-1 count %u, ref "
+                                                "frame %d, ref frame remain dep count %d\n",
+                                                (int)child_pcs_ptr->picture_number,
+                                                entry_pcs_ptr->temporal_layer_index,
+                                                entry_pcs_ptr->ref_list1_count,
+                                                (int)child_pcs_ptr->parent_pcs_ptr
+                                                    ->ref_pic_poc_array[REF_LIST_1][ref_idx],
+                                                reference_entry_ptr->dependent_count);
+                                    }
+#endif
+
                                     CHECK_REPORT_ERROR(
                                         (reference_entry_ptr->dependent_count != ~0u),
                                         encode_context_ptr->app_callback_ptr,
@@ -1154,7 +1176,8 @@ void *picture_manager_kernel(void *input_ptr) {
                         }
 
                         if (entry_pcs_ptr->frame_end_cdf_update_mode) {
-                            if (entry_pcs_ptr->slice_type != I_SLICE)
+                            if (entry_pcs_ptr->slice_type != I_SLICE &&
+                                entry_pcs_ptr->frm_hdr.frame_type != S_FRAME)
                                 child_pcs_ptr->parent_pcs_ptr->frm_hdr.primary_ref_frame =
                                     ref_index;
                             else
@@ -1172,12 +1195,6 @@ void *picture_manager_kernel(void *input_ptr) {
                             child_pcs_ptr->parent_pcs_ptr->refresh_frame_context =
                                 REFRESH_FRAME_CONTEXT_BACKWARD;
                         }
-                        // Increment the sequenceControlSet Wrapper's live count by 1 for only the pictures which are used as reference
-                        if (child_pcs_ptr->parent_pcs_ptr->is_used_as_reference_flag) {
-                            svt_object_inc_live_count(
-                                child_pcs_ptr->parent_pcs_ptr->scs_wrapper_ptr, 1);
-                        }
-
                         EbObjectWrapper *out_results_wrapper_ptr;
                         // Get Empty Results Object
                         svt_get_empty_object(context_ptr->picture_manager_output_fifo_ptr,
@@ -1228,8 +1245,8 @@ void *picture_manager_kernel(void *input_ptr) {
                     // Release the nominal live_count value
                     svt_release_object(reference_entry_ptr->reference_object_ptr);
                     reference_entry_ptr->reference_object_ptr      = (EbObjectWrapper *)NULL;
-                    reference_entry_ptr->reference_available       = EB_FALSE;
-                    reference_entry_ptr->is_used_as_reference_flag = EB_FALSE;
+                    reference_entry_ptr->reference_available       = FALSE;
+                    reference_entry_ptr->is_used_as_reference_flag = FALSE;
                 }
 
                 // Increment the head_index if the head is empty
@@ -1237,16 +1254,16 @@ void *picture_manager_kernel(void *input_ptr) {
                     (encode_context_ptr
                          ->reference_picture_queue[encode_context_ptr
                                                        ->reference_picture_queue_head_index]
-                         ->release_enable == EB_FALSE)
+                         ->release_enable == FALSE)
                     ? encode_context_ptr->reference_picture_queue_head_index
                     : (encode_context_ptr
                                ->reference_picture_queue[encode_context_ptr
                                                              ->reference_picture_queue_head_index]
-                               ->reference_available == EB_FALSE &&
+                               ->reference_available == FALSE &&
                        encode_context_ptr
                                ->reference_picture_queue[encode_context_ptr
                                                              ->reference_picture_queue_head_index]
-                               ->is_used_as_reference_flag == EB_TRUE)
+                               ->is_used_as_reference_flag == TRUE)
                     ? encode_context_ptr->reference_picture_queue_head_index
                     : (encode_context_ptr
                            ->reference_picture_queue[encode_context_ptr

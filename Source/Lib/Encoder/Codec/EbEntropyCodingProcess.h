@@ -20,7 +20,6 @@
 #include "EbPictureBufferDesc.h"
 #include "EbEncInterPrediction.h"
 #include "EbEntropyCoding.h"
-#include "EbTransQuantBuffers.h"
 #include "EbCodingUnit.h"
 #include "EbObject.h"
 
@@ -42,7 +41,6 @@ typedef struct EntropyCodingContext {
     uint32_t        blk_index;
     uint8_t         cu_depth;
     uint32_t        cu_size;
-    uint32_t        sb_sz;
     uint32_t        cu_size_log2;
     uint32_t        blk_origin_x;
     uint32_t        blk_origin_y;
@@ -62,7 +60,7 @@ typedef struct EntropyCodingContext {
     uint32_t txb_size;
 
     // MCP Context
-    EbBool      is_16bit; //enable 10 bit encode in CL
+    Bool        is_16bit; //enable 10 bit encode in CL
     int32_t     coded_area_sb;
     int32_t     coded_area_sb_uv;
     TOKENEXTRA *tok;

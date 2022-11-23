@@ -38,16 +38,30 @@
 #include "EbPictureDecisionResults.h"
 #include "EbResize.h"
 
-static const double tpl_hl_islice_div_factor[EB_MAX_TEMPORAL_LAYERS]     = {1, 1, 1, 2, 1, 0.7};
-static const double tpl_hl_base_frame_div_factor[EB_MAX_TEMPORAL_LAYERS] = {1, 1, 1, 3, 1, 0.9};
+// Specifies the weights of the ref frame in calculating qindex of non base layer frames
+static const int non_base_qindex_weight_ref[EB_MAX_TEMPORAL_LAYERS] = {1, 1, 1, 1, 1, 1};
+// Specifies the weights of the worst quality in calculating qindex of non base layer frames
+static const int    non_base_qindex_weight_wq[EB_MAX_TEMPORAL_LAYERS]    = {1, 1, 3, 1, 1, 1};
+static const double tpl_hl_islice_div_factor[EB_MAX_TEMPORAL_LAYERS]     = {1, 1, 2, 1, 1, 0.7};
+static const double tpl_hl_base_frame_div_factor[EB_MAX_TEMPORAL_LAYERS] = {1, 1, 3, 2, 1, 0.5};
 #define KB 400
+
+static void free_private_data_list(EbBufferHeaderType *p) {
+    EbPrivDataNode *p_node = (EbPrivDataNode *)p->p_app_private;
+    while (p_node) {
+        if (p_node->node_type != PRIVATE_DATA)
+            EB_FREE(p_node->data);
+        EbPrivDataNode *p_tmp = p_node;
+        p_node                = p_node->next;
+        EB_FREE(p_tmp);
+    }
+    p->p_app_private = NULL;
+}
 
 typedef struct RateControlContext {
     EbFifo *rate_control_input_tasks_fifo_ptr;
     EbFifo *rate_control_output_results_fifo_ptr;
     EbFifo *picture_decision_results_output_fifo_ptr;
-
-    RateControlIntervalParamContext **rate_control_param_queue;
 } RateControlContext;
 EbErrorType rate_control_coded_frames_stats_context_ctor(coded_frames_stats_entry *entry_ptr,
                                                          uint64_t                  picture_number) {
@@ -59,18 +73,11 @@ EbErrorType rate_control_coded_frames_stats_context_ctor(coded_frames_stats_entr
 static void rate_control_context_dctor(EbPtr p) {
     EbThreadContext    *thread_context_ptr = (EbThreadContext *)p;
     RateControlContext *obj                = (RateControlContext *)thread_context_ptr->priv;
-    if (obj->rate_control_param_queue)
-        EB_FREE_2D(obj->rate_control_param_queue);
     EB_FREE_ARRAY(obj);
 }
 
 EbErrorType rate_control_context_ctor(EbThreadContext   *thread_context_ptr,
                                       const EbEncHandle *enc_handle_ptr, int me_port_index) {
-    uint32_t interval_index;
-
-    int32_t intra_period =
-        enc_handle_ptr->scs_instance_array[0]->scs_ptr->static_config.intra_period_length;
-
     RateControlContext *context_ptr;
     EB_CALLOC_ARRAY(context_ptr, 1);
     thread_context_ptr->priv  = context_ptr;
@@ -83,40 +90,28 @@ EbErrorType rate_control_context_ctor(EbThreadContext   *thread_context_ptr,
     context_ptr->picture_decision_results_output_fifo_ptr = svt_system_resource_get_producer_fifo(
         enc_handle_ptr->picture_decision_results_resource_ptr, me_port_index);
 
-    EB_MALLOC_2D(context_ptr->rate_control_param_queue, (int32_t)PARALLEL_GOP_MAX_NUMBER, 1);
-
-    for (interval_index = 0; interval_index < PARALLEL_GOP_MAX_NUMBER; interval_index++) {
-        context_ptr->rate_control_param_queue[interval_index]->first_poc =
-            (interval_index * (uint32_t)(intra_period + 1));
-        context_ptr->rate_control_param_queue[interval_index]->last_poc =
-            ((interval_index + 1) * (uint32_t)(intra_period + 1)) - 1;
-        context_ptr->rate_control_param_queue[interval_index]->processed_frame_number = 0;
-        context_ptr->rate_control_param_queue[interval_index]->end_of_seq_seen        = 0;
-        context_ptr->rate_control_param_queue[interval_index]->last_i_qp              = 0;
-    }
-
     return EB_ErrorNone;
 }
 
 #define MAX_Q_INDEX 255
 #define MIN_Q_INDEX 0
 
-extern int16_t svt_av1_ac_quant_q3(int32_t qindex, int32_t delta, AomBitDepth bit_depth);
 // These functions use formulaic calculations to make playing with the
 // quantizer tables easier. If necessary they can be replaced by lookup
 // tables if and when things settle down in the experimental Bitstream
-
-int32_t svt_av1_convert_qindex_to_q_fp8(int32_t qindex, AomBitDepth bit_depth) {
+int32_t svt_av1_convert_qindex_to_q_fp8(int32_t qindex, EbBitDepth bit_depth) {
     // Convert the index to a real Q value (scaled down to match old Q values)
     switch (bit_depth) {
-    case AOM_BITS_8: return svt_av1_ac_quant_q3(qindex, 0, bit_depth) << 6; // / 4.0;
-    case AOM_BITS_10: return svt_av1_ac_quant_q3(qindex, 0, bit_depth) << 4; // / 16.0;
-    case AOM_BITS_12: return svt_av1_ac_quant_q3(qindex, 0, bit_depth) << 3; // / 64.0;
-    default: assert(0 && "bit_depth should be AOM_BITS_8, AOM_BITS_10 or AOM_BITS_12"); return -1;
+    case EB_EIGHT_BIT: return svt_aom_ac_quant_qtx(qindex, 0, bit_depth) << 6; // / 4.0;
+    case EB_TEN_BIT: return svt_aom_ac_quant_qtx(qindex, 0, bit_depth) << 4; // / 16.0;
+    case EB_TWELVE_BIT: return svt_aom_ac_quant_qtx(qindex, 0, bit_depth) << 3; // / 64.0;
+    default:
+        assert(0 && "bit_depth should be EB_EIGHT_BIT, EB_TEN_BIT or EB_TWELVE_BIT");
+        return -1;
     }
 }
 
-int32_t svt_av1_compute_qdelta_fp(int32_t qstart_fp8, int32_t qtarget_fp8, AomBitDepth bit_depth) {
+int32_t svt_av1_compute_qdelta_fp(int32_t qstart_fp8, int32_t qtarget_fp8, EbBitDepth bit_depth) {
     int32_t start_index  = MAX_Q_INDEX;
     int32_t target_index = MAX_Q_INDEX;
     int32_t i;
@@ -137,16 +132,18 @@ int32_t svt_av1_compute_qdelta_fp(int32_t qstart_fp8, int32_t qtarget_fp8, AomBi
 
     return target_index - start_index;
 }
-double svt_av1_convert_qindex_to_q(int32_t qindex, AomBitDepth bit_depth) {
+double svt_av1_convert_qindex_to_q(int32_t qindex, EbBitDepth bit_depth) {
     // Convert the index to a real Q value (scaled down to match old Q values)
     switch (bit_depth) {
-    case AOM_BITS_8: return svt_av1_ac_quant_q3(qindex, 0, bit_depth) / 4.0;
-    case AOM_BITS_10: return svt_av1_ac_quant_q3(qindex, 0, bit_depth) / 16.0;
-    case AOM_BITS_12: return svt_av1_ac_quant_q3(qindex, 0, bit_depth) / 64.0;
-    default: assert(0 && "bit_depth should be AOM_BITS_8, AOM_BITS_10 or AOM_BITS_12"); return -1.0;
+    case EB_EIGHT_BIT: return svt_aom_ac_quant_qtx(qindex, 0, bit_depth) / 4.0;
+    case EB_TEN_BIT: return svt_aom_ac_quant_qtx(qindex, 0, bit_depth) / 16.0;
+    case EB_TWELVE_BIT: return svt_aom_ac_quant_qtx(qindex, 0, bit_depth) / 64.0;
+    default:
+        assert(0 && "bit_depth should be EB_EIGHT_BIT, EB_TEN_BIT or EB_TWELVE_BIT");
+        return -1.0;
     }
 }
-int32_t svt_av1_compute_qdelta(double qstart, double qtarget, AomBitDepth bit_depth) {
+int32_t svt_av1_compute_qdelta(double qstart, double qtarget, EbBitDepth bit_depth) {
     int32_t start_index  = MAX_Q_INDEX;
     int32_t target_index = MAX_Q_INDEX;
     int32_t i;
@@ -193,19 +190,17 @@ int32_t svt_av1_compute_qdelta(double qstart, double qtarget, AomBitDepth bit_de
 #define SUPERRES_QADJ_PER_DENOM_KEYFRAME 2
 #define SUPERRES_QADJ_PER_DENOM_ARFFRAME 0
 
-#define ASSIGN_MINQ_TABLE(bit_depth, name)                   \
-    do {                                                     \
-        name = NULL;                                         \
-        switch (bit_depth) {                                 \
-        case AOM_BITS_10: name = name##_10; break;           \
-        case AOM_BITS_12: name = name##_12; break;           \
-        case AOM_BITS_8: name = name##_8; break;             \
-        }                                                    \
-        assert(name &&                                       \
-               "bit_depth should be AOM_BITS_8, AOM_BITS_10" \
-               " or AOM_BITS_12");                           \
-        if (!name)                                           \
-            name = name##_8;                                 \
+#define ASSIGN_MINQ_TABLE(bit_depth, name)                                                     \
+    do {                                                                                       \
+        name = NULL;                                                                           \
+        switch (bit_depth) {                                                                   \
+        case EB_TEN_BIT: name = name##_10; break;                                              \
+        case EB_TWELVE_BIT: name = name##_12; break;                                           \
+        case EB_EIGHT_BIT: name = name##_8; break;                                             \
+        default: assert(0 && "bit_depth should be EB_EIGHT_BIT, EB_TEN_BIT or EB_TWELVE_BIT"); \
+        }                                                                                      \
+        if (!name)                                                                             \
+            name = name##_8;                                                                   \
     } while (0)
 static int kf_low_motion_minq_cqp_8[QINDEX_RANGE] = {
     0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
@@ -505,7 +500,7 @@ static int get_active_quality(int q, int gfu_boost, int low, int high, int *low_
         return low_motion_minq[q] + adjustment;
     }
 }
-static int get_kf_active_quality_tpl(const RATE_CONTROL *const rc, int q, AomBitDepth bit_depth) {
+static int get_kf_active_quality_tpl(const RATE_CONTROL *const rc, int q, EbBitDepth bit_depth) {
     int *kf_low_motion_minq_cqp;
     int *kf_high_motion_minq;
     ASSIGN_MINQ_TABLE(bit_depth, kf_low_motion_minq_cqp);
@@ -513,8 +508,7 @@ static int get_kf_active_quality_tpl(const RATE_CONTROL *const rc, int q, AomBit
     return get_active_quality(
         q, rc->kf_boost, kf_low, kf_high, kf_low_motion_minq_cqp, kf_high_motion_minq);
 }
-static int get_gf_active_quality_tpl_la(const RATE_CONTROL *const rc, int q,
-                                        AomBitDepth bit_depth) {
+static int get_gf_active_quality_tpl_la(const RATE_CONTROL *const rc, int q, EbBitDepth bit_depth) {
     int *arfgf_low_motion_minq;
     int *arfgf_high_motion_minq;
     ASSIGN_MINQ_TABLE(bit_depth, arfgf_low_motion_minq);
@@ -526,12 +520,11 @@ static int get_gf_active_quality_tpl_la(const RATE_CONTROL *const rc, int q,
                               arfgf_low_motion_minq,
                               arfgf_high_motion_minq);
 }
-static int get_gf_high_motion_quality(int q, AomBitDepth bit_depth) {
+static int get_gf_high_motion_quality(int q, EbBitDepth bit_depth) {
     int *arfgf_high_motion_minq;
     ASSIGN_MINQ_TABLE(bit_depth, arfgf_high_motion_minq);
     return arfgf_high_motion_minq[q];
 }
-int16_t svt_av1_dc_quant_qtx(int32_t qindex, int32_t delta, AomBitDepth bit_depth);
 
 static int get_cqp_kf_boost_from_r0(double r0, int frames_to_key,
                                     EbInputResolution input_resolution) {
@@ -567,27 +560,34 @@ static int get_gfu_boost_from_r0_lap(double min_factor, double max_factor, doubl
     const int boost = (int)rint(factor / r0);
     return boost;
 }
-
-int svt_av1_get_deltaq_offset(AomBitDepth bit_depth, int qindex, double beta, EB_SLICE slice_type) {
+int svt_av1_get_deltaq_offset(EbBitDepth bit_depth, int qindex, double beta, uint8_t is_intra) {
     assert(beta > 0.0);
-    int q = svt_av1_dc_quant_qtx(qindex, 0, bit_depth);
+    int q = svt_aom_dc_quant_qtx(qindex, 0, bit_depth);
     int newq;
     // use a less aggressive action when lowering the q for non I_slice
-    if (slice_type != I_SLICE && beta > 1)
+    if (!is_intra && beta > 1)
         newq = (int)rint(q / sqrt(sqrt(beta)));
     else
         newq = (int)rint(q / sqrt(beta));
     int orig_qindex = qindex;
+    if (newq == q) {
+        return 0;
+    }
     if (newq < q) {
-        do {
+        while (qindex > 0) {
             qindex--;
-            q = svt_av1_dc_quant_qtx(qindex, 0, bit_depth);
-        } while (newq < q && qindex > 0);
+            q = svt_aom_dc_quant_qtx(qindex, 0, bit_depth);
+            if (newq >= q)
+                break;
+        }
     } else {
-        do {
+        while (qindex < MAXQ) {
             qindex++;
-            q = svt_av1_dc_quant_qtx(qindex, 0, bit_depth);
-        } while (newq > q && qindex < MAXQ);
+            q = svt_aom_dc_quant_qtx(qindex, 0, bit_depth);
+            if (newq <= q) {
+                break;
+            }
+        }
     }
     return qindex - orig_qindex;
 }
@@ -599,10 +599,8 @@ int svt_av1_rc_bits_per_mb(FrameType frame_type, int qindex, double correction_f
                            int onepass_cbr_mode) {
     const double q          = svt_av1_convert_qindex_to_q(qindex, bit_depth);
     int          enumerator = frame_type == KEY_FRAME ? 1400000 : 1000000;
-    if (onepass_cbr_mode == 2) {
-        enumerator = frame_type == KEY_FRAME ? 7000000 : 5250000;
-    } else if (onepass_cbr_mode == 1) {
-        enumerator = frame_type == KEY_FRAME ? 2000000 : 1500000;
+    if (onepass_cbr_mode) {
+        enumerator = frame_type == KEY_FRAME ? 1500000 : 1300000;
     }
     if (is_screen_content_type) {
         enumerator = frame_type == KEY_FRAME ? 1000000 : 750000;
@@ -691,61 +689,50 @@ static const rate_factor_level rate_factor_levels[FRAME_UPDATE_TYPES] = {
     GF_ARF_LOW, // INTNL_ARF_UPDATE
 };
 
-static rate_factor_level get_rate_factor_level(const GF_GROUP *const gf_group,
-                                               unsigned char         gf_group_index) {
-    const FRAME_UPDATE_TYPE update_type = gf_group->update_type[gf_group_index];
-    assert(update_type < FRAME_UPDATE_TYPES);
-    return rate_factor_levels[update_type];
-}
+static int av1_frame_type_qdelta_org(struct PictureParentControlSet *ppcs, RATE_CONTROL *rc, int q,
+                                     const int bit_depth) {
+    const rate_factor_level rf_lvl      = rate_factor_levels[ppcs->update_type];
+    const FrameType         frame_type  = (rf_lvl == KF_STD) ? KEY_FRAME : INTER_FRAME;
+    double                  rate_factor = rate_factor_deltas[rf_lvl];
 
-int av1_frame_type_qdelta_org(RATE_CONTROL *rc, GF_GROUP *gf_group, unsigned char gf_group_index,
-                              int q, const int bit_depth, uint8_t sc_content_detected) {
-    const rate_factor_level rf_lvl     = get_rate_factor_level(gf_group, gf_group_index);
-    const FrameType         frame_type = (rf_lvl == KF_STD) ? KEY_FRAME : INTER_FRAME;
-    double                  rate_factor;
-
-    rate_factor = rate_factor_deltas[rf_lvl];
-    //anaghdin: to remove?
     if (rf_lvl == GF_ARF_LOW) {
-        rate_factor -= (gf_group->layer_depth[gf_group_index] - 2) * 0.1;
+        rate_factor -= (ppcs->layer_depth - 2) * 0.1;
         rate_factor = AOMMAX(rate_factor, 1.0);
     }
     return svt_av1_compute_qdelta_by_rate(
-        rc, frame_type, q, rate_factor, bit_depth, sc_content_detected);
+        rc, frame_type, q, rate_factor, bit_depth, ppcs->sc_class1);
 }
 
+int intra_period_factor(struct PictureParentControlSet *ppcs_ptr) {
+    int ip = ppcs_ptr->scs_ptr->static_config.intra_period_length;
+    if (ppcs_ptr->picture_number == 0 || ip == -1)
+        return 1;
+    return 10;
+}
 static void adjust_active_best_and_worst_quality_org(PictureControlSet *pcs_ptr, RATE_CONTROL *rc,
                                                      int *active_worst, int *active_best) {
     int                 active_best_quality  = *active_best;
     int                 active_worst_quality = *active_worst;
     SequenceControlSet *scs_ptr              = pcs_ptr->parent_pcs_ptr->scs_ptr;
     const int           bit_depth            = scs_ptr->static_config.encoder_bit_depth;
-
-    EncodeContext         *encode_context_ptr = scs_ptr->encode_context_ptr;
-    TWO_PASS *const        twopass            = &scs_ptr->twopass;
-    const enum aom_rc_mode rc_mode            = encode_context_ptr->rc_cfg.mode;
-    GF_GROUP              *gf_group           = &encode_context_ptr->gf_group;
+    TWO_PASS *const     twopass              = &scs_ptr->twopass;
     // Extension to max or min Q if undershoot or overshoot is outside
     // the permitted range.
-    if (rc_mode != AOM_Q) {
-        if (frame_is_intra_only(pcs_ptr->parent_pcs_ptr) ||
-            (pcs_ptr->parent_pcs_ptr->temporal_layer_index < 2 && scs_ptr->is_short_clip) ||
-            (pcs_ptr->parent_pcs_ptr->is_used_as_reference_flag && !scs_ptr->is_short_clip)) {
-            active_best_quality -= (twopass->extend_minq + twopass->extend_minq_fast);
-            active_worst_quality += (twopass->extend_maxq / 2);
-        } else {
-            active_best_quality -= (twopass->extend_minq + twopass->extend_minq_fast) / 2;
-            active_worst_quality += twopass->extend_maxq;
-        }
+    if (frame_is_intra_only(pcs_ptr->parent_pcs_ptr) ||
+        (scs_ptr->static_config.gop_constraint_rc &&
+         pcs_ptr->parent_pcs_ptr->is_used_as_reference_flag) ||
+        (pcs_ptr->parent_pcs_ptr->temporal_layer_index < 2 && scs_ptr->is_short_clip) ||
+        (pcs_ptr->parent_pcs_ptr->is_used_as_reference_flag && !scs_ptr->is_short_clip)) {
+        active_best_quality -= (twopass->extend_minq + twopass->extend_minq_fast);
+        active_worst_quality += (twopass->extend_maxq / 2);
+    } else {
+        active_best_quality -= (twopass->extend_minq + twopass->extend_minq_fast) / 2;
+        active_worst_quality += twopass->extend_maxq;
     }
-
     // Static forced key frames Q restrictions dealt with elsewhere.
-    const int qdelta     = av1_frame_type_qdelta_org(rc,
-                                                 gf_group,
-                                                 pcs_ptr->parent_pcs_ptr->gf_group_index,
-                                                 active_worst_quality,
-                                                 bit_depth,
-                                                 pcs_ptr->parent_pcs_ptr->sc_class1);
+    const int qdelta = av1_frame_type_qdelta_org(
+        pcs_ptr->parent_pcs_ptr, rc, active_worst_quality, bit_depth);
+
     active_worst_quality = AOMMAX(active_worst_quality + qdelta, active_best_quality);
     active_best_quality  = clamp(active_best_quality, rc->best_quality, rc->worst_quality);
     active_worst_quality = clamp(active_worst_quality, active_best_quality, rc->worst_quality);
@@ -764,8 +751,7 @@ static void adjust_active_best_and_worst_quality(PictureControlSet *pcs_ptr, RAT
     const int           bit_depth = scs_ptr->static_config.encoder_bit_depth;
 
     // Static forced key frames Q restrictions dealt with elsewhere.
-    if (!frame_is_intra_only(pcs_ptr->parent_pcs_ptr)
-        /*|| (cpi->twopass.last_kfgroup_zeromotion_pct < STATIC_MOTION_THRESH)*/) {
+    if (!frame_is_intra_only(pcs_ptr->parent_pcs_ptr)) {
         const int qdelta = svt_av1_frame_type_qdelta(
             rc, rf_level, active_worst_quality, bit_depth, pcs_ptr->parent_pcs_ptr->sc_class1);
         active_worst_quality = AOMMAX(active_worst_quality + qdelta, active_best_quality);
@@ -777,79 +763,80 @@ static void adjust_active_best_and_worst_quality(PictureControlSet *pcs_ptr, RAT
     *active_best  = active_best_quality;
     *active_worst = active_worst_quality;
 }
-
+static int svt_av1_get_q_index_from_qstep_ratio(int leaf_qindex, double qstep_ratio,
+                                                const int bit_depth) {
+    const double leaf_qstep   = svt_aom_dc_quant_qtx(leaf_qindex, 0, bit_depth);
+    const double target_qstep = leaf_qstep * qstep_ratio;
+    int          qindex;
+    for (qindex = leaf_qindex; qindex > 0; --qindex) {
+        const double qstep = svt_aom_dc_quant_qtx(qindex, 0, bit_depth);
+        if (qstep + 0.1 <= target_qstep)
+            break;
+    }
+    return qindex;
+}
+static const double r0_weight[2 /* VBR/CRF */][2 /* BASE/ISLICE */] = {
+    // {BASE, ISLICE}
+    {0.85, 0.75}, // VBR
+    {0.9, 0.75} // CRF
+};
 /******************************************************
- * cqp_qindex_calc_tpl_la
+ * crf_qindex_calc
  * Assign the q_index per frame.
  * Used in the one pass encoding with tpl stats
  ******************************************************/
-static int cqp_qindex_calc_tpl_la(PictureControlSet *pcs_ptr, RATE_CONTROL *rc, int qindex) {
-    SequenceControlSet *scs_ptr              = pcs_ptr->parent_pcs_ptr->scs_ptr;
-    const int           cq_level             = qindex;
-    int                 active_best_quality  = 0;
-    int                 active_worst_quality = qindex;
-    rc->arf_q                                = 0;
-    int q;
-    int refresh_golden_frame, refresh_alt_ref_frame, is_intrl_arf_boost, rf_level;
-    refresh_golden_frame  = frame_is_intra_only(pcs_ptr->parent_pcs_ptr) ? 1 : 0;
-    refresh_alt_ref_frame = (pcs_ptr->parent_pcs_ptr->temporal_layer_index == 0) ? 1 : 0;
-    is_intrl_arf_boost    = (pcs_ptr->parent_pcs_ptr->temporal_layer_index > 0 &&
-                          pcs_ptr->parent_pcs_ptr->is_used_as_reference_flag)
-           ? 1
-           : 0;
-    rf_level              = (frame_is_intra_only(pcs_ptr->parent_pcs_ptr))  ? KF_STD
-                     : (pcs_ptr->parent_pcs_ptr->temporal_layer_index == 0) ? GF_ARF_STD
-                     : pcs_ptr->parent_pcs_ptr->is_used_as_reference_flag   ? GF_ARF_LOW
-                                                                            : INTER_NORMAL;
+static int crf_qindex_calc(PictureControlSet *pcs, RATE_CONTROL *rc, int qindex) {
+    PictureParentControlSet *ppcs                 = pcs->parent_pcs_ptr;
+    SequenceControlSet      *scs_ptr              = ppcs->scs_ptr;
+    const int                cq_level             = qindex;
+    int                      active_best_quality  = 0;
+    int                      active_worst_quality = qindex;
+    rc->arf_q                                     = 0;
+    int           q;
+    const uint8_t is_ref                = ppcs->is_used_as_reference_flag;
+    const uint8_t temporal_layer        = ppcs->temporal_layer_index;
+    const uint8_t hierarchical_levels   = ppcs->hierarchical_levels;
+    const int     refresh_golden_frame  = frame_is_intra_only(ppcs);
+    const int     refresh_alt_ref_frame = (temporal_layer == 0);
+    const int     is_intrl_arf_boost    = (temporal_layer > 0 && is_ref);
+    const int     leaf_frame            = temporal_layer < hierarchical_levels ? 0 : 1;
+    const int     rf_level              = (frame_is_intra_only(ppcs)) ? KF_STD
+                         : (temporal_layer == 0)                      ? GF_ARF_STD
+                         : is_ref                                     ? GF_ARF_LOW
+                                                                      : INTER_NORMAL;
 
     const int bit_depth = scs_ptr->static_config.encoder_bit_depth;
     // Since many frames can be processed at the same time, storing/using arf_q in rc param is not sufficient and will create a run to run.
     // So, for each frame, arf_q is updated based on the qp of its references.
-    rc->arf_q = MAX(rc->arf_q, ((pcs_ptr->ref_pic_qp_array[0][0] << 2) + 2));
-    if (pcs_ptr->slice_type == B_SLICE)
-        rc->arf_q = MAX(rc->arf_q, ((pcs_ptr->ref_pic_qp_array[1][0] << 2) + 2));
+    rc->arf_q = MAX(rc->arf_q, ((pcs->ref_pic_qp_array[0][0] << 2) + 2));
+    if (pcs->slice_type == B_SLICE)
+        rc->arf_q = MAX(rc->arf_q, ((pcs->ref_pic_qp_array[1][0] << 2) + 2));
 
-    if (frame_is_intra_only(pcs_ptr->parent_pcs_ptr)) {
+    if (frame_is_intra_only(ppcs)) {
         // Not forced keyframe.
         double q_adj_factor = 1.0;
         double q_val;
         rc->worst_quality = MAXQ;
         rc->best_quality  = MINQ;
-        // The new tpl only looks at pictures in tpl group, which is fewer than before,
-        // As a results, we defined a factor to adjust r0
-        if (pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type != KEY_FRAME) {
-            double factor;
-            factor                      = 1;
-            pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 / factor;
+
+        // TPL may only look at a subset of available pictures in tpl group, which may affect the r0 calcuation.
+        // As a result, we defined a factor to adjust r0 (to compensate for TPL not using all available frames).
+        if (ppcs->tpl_ctrls.r0_adjust_factor) {
+            const double div_factor = ppcs->used_tpl_frame_num * ppcs->tpl_ctrls.r0_adjust_factor;
+            ppcs->r0                = ppcs->r0 / div_factor;
         }
-        pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 /
-            tpl_hl_islice_div_factor[scs_ptr->max_heirachical_level];
-        if (pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type == KEY_FRAME) {
-            {
-                double factor = 1.0;
-                if (pcs_ptr->parent_pcs_ptr->r0 < 0.2) {
-                    double mult = 1.0;
-                    factor      = (double)(mult * 255.0) / qindex;
-                }
-                pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 / factor;
-            }
-        }
-        if (!scs_ptr->lad_mg) {
-            double div_factor           = pcs_ptr->parent_pcs_ptr->tpl_ctrls.r0_adjust_factor
-                          ? pcs_ptr->parent_pcs_ptr->used_tpl_frame_num * 0.2
-                          : 1.0;
-            pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 / div_factor;
-        }
+        // Scale r0 based on the GOP structure
+        ppcs->r0 = ppcs->r0 / tpl_hl_islice_div_factor[scs_ptr->max_heirachical_level];
+
         // when frames_to_key not available, i.e. in 1 pass encoding
-        rc->kf_boost = get_cqp_kf_boost_from_r0(
-            pcs_ptr->parent_pcs_ptr->r0, -1, scs_ptr->input_resolution);
-        int max_boost = pcs_ptr->parent_pcs_ptr->used_tpl_frame_num * KB;
+        rc->kf_boost  = get_cqp_kf_boost_from_r0(ppcs->r0, -1, scs_ptr->input_resolution);
+        int max_boost = ppcs->used_tpl_frame_num * KB;
         rc->kf_boost  = AOMMIN(rc->kf_boost, max_boost);
         // Baseline value derived from cpi->active_worst_quality and kf boost.
         active_best_quality = get_kf_active_quality_tpl(rc, active_worst_quality, bit_depth);
         // Allow somewhat lower kf minq with small image formats.
-        if (pcs_ptr->parent_pcs_ptr->input_resolution == INPUT_SIZE_240p_RANGE)
-            q_adj_factor -= (pcs_ptr->parent_pcs_ptr->tune_tpl_for_chroma) ? 0.2 : 0.15;
+        if (ppcs->input_resolution == INPUT_SIZE_240p_RANGE)
+            q_adj_factor -= (ppcs->tune_tpl_for_chroma) ? 0.2 : 0.15;
         // Make a further adjustment based on the kf zero motion measure.
 
         // Convert the adjustment factor to a qindex delta
@@ -857,41 +844,38 @@ static int cqp_qindex_calc_tpl_la(PictureControlSet *pcs_ptr, RATE_CONTROL *rc, 
         q_val = svt_av1_convert_qindex_to_q(active_best_quality, bit_depth);
         active_best_quality += svt_av1_compute_qdelta(q_val, q_val * q_adj_factor, bit_depth);
     } else if (refresh_golden_frame || is_intrl_arf_boost || refresh_alt_ref_frame) {
-        //double min_boost_factor = sqrt(1 << pcs_ptr->parent_pcs_ptr->hierarchical_levels);
-        double min_boost_factor = (int32_t)1 << (pcs_ptr->parent_pcs_ptr->hierarchical_levels >> 1);
-        if (pcs_ptr->parent_pcs_ptr->hierarchical_levels & 1) {
+        double min_boost_factor = (int32_t)1 << (hierarchical_levels >> 1);
+        if (hierarchical_levels & 1) {
             min_boost_factor *= CONST_SQRT2;
         }
-        // The new tpl only looks at pictures in tpl group, which is fewer than before,
-        // As a results, we defined a factor to adjust r0
-        if (pcs_ptr->parent_pcs_ptr->temporal_layer_index == 0) {
-            double div_factor = 1;
-            if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.r0_adjust_factor) {
-                div_factor = pcs_ptr->parent_pcs_ptr->used_tpl_frame_num *
-                    pcs_ptr->parent_pcs_ptr->tpl_ctrls.r0_adjust_factor;
+
+        // TPL may only look at a subset of available pictures in tpl group, which may affect the r0 calcuation.
+        // As a result, we defined a factor to adjust r0 (to compensate for TPL not using all available frames).
+        if (temporal_layer == 0) {
+            if (ppcs->tpl_ctrls.r0_adjust_factor) {
+                const double div_factor = ppcs->used_tpl_frame_num *
+                    ppcs->tpl_ctrls.r0_adjust_factor;
+                ppcs->r0 = ppcs->r0 / div_factor;
+
+                // Further scale r0 based on the GOP structure
+                ppcs->r0 = ppcs->r0 / tpl_hl_base_frame_div_factor[scs_ptr->max_heirachical_level];
             }
-            pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 / div_factor;
-            pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 /
-                tpl_hl_base_frame_div_factor[scs_ptr->max_heirachical_level];
         }
 
-        int num_stats_required_for_gfu_boost = pcs_ptr->parent_pcs_ptr->tpl_group_size +
-            (1 << pcs_ptr->parent_pcs_ptr->hierarchical_levels);
+        int num_stats_required_for_gfu_boost = ppcs->tpl_group_size + (1 << hierarchical_levels);
 
-        rc->gfu_boost        = get_gfu_boost_from_r0_lap(min_boost_factor,
-                                                  MAX_GFUBOOST_FACTOR,
-                                                  pcs_ptr->parent_pcs_ptr->r0,
-                                                  num_stats_required_for_gfu_boost);
-        rc->arf_boost_factor = (pcs_ptr->ref_slice_type_array[0][0] == I_SLICE &&
-                                pcs_ptr->ref_pic_r0[0][0] - pcs_ptr->parent_pcs_ptr->r0 >= 0.08)
+        rc->gfu_boost = get_gfu_boost_from_r0_lap(
+            min_boost_factor, MAX_GFUBOOST_FACTOR, ppcs->r0, num_stats_required_for_gfu_boost);
+        rc->arf_boost_factor = (pcs->ref_slice_type_array[0][0] == I_SLICE &&
+                                pcs->ref_pic_r0[0][0] - ppcs->r0 >= 0.08)
             ? (float_t)1.3
             : (float_t)1;
         q                    = active_worst_quality;
 
         // non ref frame or repeated frames with re-encode
-        if (!refresh_alt_ref_frame && !is_intrl_arf_boost)
+        if ((!refresh_alt_ref_frame && !is_intrl_arf_boost) || leaf_frame) {
             active_best_quality = cq_level;
-        else {
+        } else {
             if (!is_intrl_arf_boost) {
                 active_best_quality = get_gf_active_quality_tpl_la(rc, q, bit_depth);
                 rc->arf_q           = active_best_quality;
@@ -900,22 +884,25 @@ static int cqp_qindex_calc_tpl_la(PictureControlSet *pcs_ptr, RATE_CONTROL *rc, 
                 active_best_quality = min_boost - (int)(boost * rc->arf_boost_factor);
             } else {
                 EbReferenceObject *ref_obj_l0 =
-                    (EbReferenceObject *)pcs_ptr->ref_pic_ptr_array[REF_LIST_0][0]->object_ptr;
+                    (EbReferenceObject *)pcs->ref_pic_ptr_array[REF_LIST_0][0]->object_ptr;
                 EbReferenceObject *ref_obj_l1 = NULL;
-                if (pcs_ptr->slice_type == B_SLICE)
+                if (pcs->slice_type == B_SLICE)
                     ref_obj_l1 =
-                        (EbReferenceObject *)pcs_ptr->ref_pic_ptr_array[REF_LIST_1][0]->object_ptr;
+                        (EbReferenceObject *)pcs->ref_pic_ptr_array[REF_LIST_1][0]->object_ptr;
 
                 uint8_t ref_tmp_layer = ref_obj_l0->tmp_layer_idx;
-                if (pcs_ptr->slice_type == B_SLICE)
+                if (pcs->slice_type == B_SLICE)
                     ref_tmp_layer = MAX(ref_tmp_layer, ref_obj_l1->tmp_layer_idx);
                 active_best_quality    = rc->arf_q;
-                int8_t tmp_layer_delta = (int8_t)pcs_ptr->parent_pcs_ptr->temporal_layer_index -
-                    (int8_t)ref_tmp_layer;
+                int8_t tmp_layer_delta = (int8_t)ppcs->temporal_layer_index - (int8_t)ref_tmp_layer;
                 // active_best_quality is updated with the q index of the reference
                 if (rf_level == GF_ARF_LOW) {
+                    int w1 = non_base_qindex_weight_ref[scs_ptr->max_heirachical_level];
+                    int w2 = non_base_qindex_weight_wq[scs_ptr->max_heirachical_level];
                     while (tmp_layer_delta--)
-                        active_best_quality = (active_best_quality + cq_level + 1) / 2;
+                        active_best_quality = (w1 * active_best_quality + (w2 * cq_level) +
+                                               ((w1 + w2) / 2)) /
+                            (w1 + w2);
                 }
             }
             // For alt_ref and GF frames (including internal arf frames) adjust the
@@ -928,35 +915,37 @@ static int cqp_qindex_calc_tpl_la(PictureControlSet *pcs_ptr, RATE_CONTROL *rc, 
     } else
         active_best_quality = cq_level;
 
-    if (pcs_ptr->parent_pcs_ptr->temporal_layer_index)
+    // Calculated qindex based on r0 using qstep calculation
+    if (ppcs->tpl_ctrls.qstep_based_q_calc && temporal_layer == 0) {
+        double weight = r0_weight[1 /* CRF */][frame_is_intra_only(ppcs)];
+
+        // adjust the weight for base layer frames with shorter minigops
+        if (scs_ptr->lad_mg && !frame_is_intra_only(ppcs) &&
+            (ppcs->tpl_group_size < (uint32_t)(2 << scs_ptr->max_heirachical_level)))
+            weight += 0.05;
+        const double qstep_ratio             = sqrt(ppcs->r0) * weight;
+        const int    qindex_from_qstep_ratio = svt_av1_get_q_index_from_qstep_ratio(
+            qindex, qstep_ratio, bit_depth);
+
+        if (!frame_is_intra_only(ppcs))
+            rc->arf_q = qindex_from_qstep_ratio;
+        active_best_quality  = clamp(qindex_from_qstep_ratio, rc->best_quality, qindex);
+        active_worst_quality = (active_best_quality + (3 * active_worst_quality) + 2) / 4;
+    }
+
+    if (ppcs->temporal_layer_index)
         active_best_quality = MAX(active_best_quality, rc->arf_q);
     adjust_active_best_and_worst_quality(
-        pcs_ptr, rc, rf_level, &active_worst_quality, &active_best_quality);
+        pcs, rc, rf_level, &active_worst_quality, &active_best_quality);
     q = active_best_quality;
     clamp(q, active_best_quality, active_worst_quality);
-    pcs_ptr->parent_pcs_ptr->top_index    = active_worst_quality;
-    pcs_ptr->parent_pcs_ptr->bottom_index = active_best_quality;
-    assert(pcs_ptr->parent_pcs_ptr->top_index <= rc->worst_quality &&
-           pcs_ptr->parent_pcs_ptr->top_index >= rc->best_quality);
-    assert(pcs_ptr->parent_pcs_ptr->bottom_index <= rc->worst_quality &&
-           pcs_ptr->parent_pcs_ptr->bottom_index >= rc->best_quality);
+    ppcs->top_index    = active_worst_quality;
+    ppcs->bottom_index = active_best_quality;
+    assert(ppcs->top_index <= rc->worst_quality && ppcs->top_index >= rc->best_quality);
+    assert(ppcs->bottom_index <= rc->worst_quality && ppcs->bottom_index >= rc->best_quality);
     return q;
 }
 
-#define DEFAULT_KF_BOOST 2700
-#define DEFAULT_GF_BOOST 1350
-
-int svt_av1_get_q_index_from_qstep_ratio(int leaf_qindex, double qstep_ratio, const int bit_depth) {
-    const double leaf_qstep   = svt_av1_dc_quant_qtx(leaf_qindex, 0, bit_depth);
-    const double target_qstep = leaf_qstep * qstep_ratio;
-    int          qindex       = leaf_qindex;
-    for (qindex = leaf_qindex; qindex > 0; --qindex) {
-        const double qstep = svt_av1_dc_quant_qtx(qindex, 0, bit_depth);
-        if (qstep + 0.1 <= target_qstep)
-            break;
-    }
-    return qindex;
-}
 /******************************************************
  * non_base_boost
  * Compute a non-base frame boost.
@@ -967,16 +956,17 @@ int8_t non_base_boost(PictureControlSet *pcs_ptr) {
         (EbReferenceObject *)pcs_ptr->ref_pic_ptr_array[REF_LIST_0][0]->object_ptr;
     uint32_t l0_was_intra = 0;
     if (ref_obj_l0->slice_type != I_SLICE) {
-        for (uint32_t sb_index = 0; sb_index < pcs_ptr->sb_total_count_pix; sb_index++) {
+        for (uint32_t sb_index = 0; sb_index < pcs_ptr->sb_total_count; sb_index++) {
             l0_was_intra += ref_obj_l0->sb_intra[sb_index];
         }
     }
     if (l0_was_intra) {
-        int8_t intra_percentage = (l0_was_intra * 100) / pcs_ptr->sb_total_count_pix;
+        int8_t intra_percentage = (l0_was_intra * 100) / pcs_ptr->sb_total_count;
         q_boost                 = intra_percentage >> 2;
     }
     return q_boost;
 }
+
 /******************************************************
  * cqp_qindex_calc
  * Assign the q_index per frame.
@@ -987,6 +977,26 @@ static int cqp_qindex_calc(PictureControlSet *pcs_ptr, int qindex) {
     int                 q;
     const int           bit_depth = scs_ptr->static_config.encoder_bit_depth;
 
+#if TUNE_CQP_CHROMA_SSIM
+    int active_worst_quality = qindex;
+    if (pcs_ptr->temporal_layer_index == 0) {
+        const double qratio_grad = pcs_ptr->parent_pcs_ptr->hierarchical_levels <= 4 ? 0.3 : 0.2;
+        const double qstep_ratio = 0.2 + (1.0 - (double)active_worst_quality / MAXQ) * qratio_grad;
+        q = scs_ptr->cqp_base_q = svt_av1_get_q_index_from_qstep_ratio(
+            active_worst_quality, qstep_ratio, bit_depth);
+    } else if (pcs_ptr->parent_pcs_ptr->is_used_as_reference_flag &&
+               pcs_ptr->temporal_layer_index < pcs_ptr->parent_pcs_ptr->hierarchical_levels) {
+        int this_height = pcs_ptr->parent_pcs_ptr->temporal_layer_index + 1;
+        int arf_q       = scs_ptr->cqp_base_q;
+        while (this_height > 1) {
+            arf_q = (arf_q + active_worst_quality + 1) / 2;
+            --this_height;
+        }
+        q = arf_q;
+    } else {
+        q = active_worst_quality;
+    }
+#else
     int active_best_quality  = 0;
     int active_worst_quality = qindex;
 
@@ -1007,8 +1017,8 @@ static int cqp_qindex_calc(PictureControlSet *pcs_ptr, int qindex) {
                    100),
               0.0);
 
-    if (scs_ptr->static_config.pred_structure == EB_PRED_LOW_DELAY_P ||
-        scs_ptr->static_config.pred_structure == EB_PRED_LOW_DELAY_B) {
+    if (scs_ptr->static_config.pred_structure == SVT_AV1_PRED_LOW_DELAY_P ||
+        scs_ptr->static_config.pred_structure == SVT_AV1_PRED_LOW_DELAY_B) {
         if (pcs_ptr->parent_pcs_ptr->temporal_layer_index) {
             int8_t boost = non_base_boost(pcs_ptr);
             if (boost)
@@ -1020,10 +1030,55 @@ static int cqp_qindex_calc(PictureControlSet *pcs_ptr, int qindex) {
     active_best_quality = (int32_t)(qindex + delta_qindex);
     q                   = active_best_quality;
     clamp(q, active_best_quality, active_worst_quality);
+#endif
 
     return q;
 }
-const int64_t q_factor[2][6] = {{100, 110, 120, 138, 140, 150}, {100, 110, 112, 125, 135, 140}};
+
+// Returns the default rd multiplier for inter frames for a given qindex.
+// The function here is a first pass estimate based on data from
+// a previous Vizer run
+static double def_inter_rd_multiplier(int qindex) { return 3.2 + (0.0035 * (double)qindex); }
+
+// Returns the default rd multiplier for ARF/Golden Frames for a given qindex.
+// The function here is a first pass estimate based on data from
+// a previous Vizer run
+static double def_arf_rd_multiplier(int qindex) { return 3.25 + (0.0035 * (double)qindex); }
+
+// Returns the default rd multiplier for key frames for a given qindex.
+// The function here is a first pass estimate based on data from
+// a previous Vizer run
+static double def_kf_rd_multiplier(int qindex) { return 3.3 + (0.0035 * (double)qindex); }
+
+int svt_aom_compute_rd_mult_based_on_qindex(EbBitDepth bit_depth, FRAME_UPDATE_TYPE update_type,
+                                            int qindex) {
+    const int q      = svt_aom_dc_quant_qtx(qindex, 0, bit_depth);
+    int64_t   rdmult = q * q;
+
+    // Scale rdmult based on frame type (previously scaled with the following formula for all frame types:
+    // rdmult = rdmult * 3 + (rdmult * 2 / 3);
+    if (update_type == KF_UPDATE) {
+        double def_rd_q_mult = def_kf_rd_multiplier(qindex);
+        rdmult               = (int64_t)((double)rdmult * def_rd_q_mult);
+    } else if ((update_type == GF_UPDATE) || (update_type == ARF_UPDATE)) {
+        double def_rd_q_mult = def_arf_rd_multiplier(qindex);
+        rdmult               = (int64_t)((double)rdmult * def_rd_q_mult);
+    } else {
+        double def_rd_q_mult = def_inter_rd_multiplier(qindex);
+        rdmult               = (int64_t)((double)rdmult * def_rd_q_mult);
+    }
+
+    switch (bit_depth) {
+    case EB_EIGHT_BIT: break;
+    case EB_TEN_BIT: rdmult = ROUND_POWER_OF_TWO(rdmult, 4); break;
+    case EB_TWELVE_BIT: rdmult = ROUND_POWER_OF_TWO(rdmult, 8); break;
+    default:
+        assert(0 && "bit_depth should be EB_EIGHT_BIT, EB_TEN_BIT or EB_TWELVE_BIT");
+        return -1;
+    }
+
+    return rdmult > 0 ? (int)AOMMIN(rdmult, INT_MAX) : 1;
+}
 // The table we use is modified from libaom; here is the original, from libaom:
 // static const int rd_frame_type_factor[FRAME_UPDATE_TYPES] = { 128, 144, 128,
 //                                                               128, 144, 144,
@@ -1032,16 +1087,15 @@ static const int rd_frame_type_factor[FRAME_UPDATE_TYPES] = {128, 164, 128, 128,
 /*
  * Set the sse lambda based on the bit_depth, then update based on frame position.
  */
-int compute_rdmult_sse(PictureControlSet *pcs_ptr, uint8_t q_index, uint8_t bit_depth) {
-    FrameType frame_type = pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type;
+int svt_aom_compute_rd_mult(PictureControlSet *pcs, uint8_t q_index, uint8_t me_q_index,
+                            uint8_t bit_depth) {
+    FrameType frame_type = pcs->parent_pcs_ptr->frm_hdr.frame_type;
     // To set gf_update_type based on current TL vs. the max TL (e.g. for 5L, max TL is 4)
-    uint8_t temporal_layer_index = pcs_ptr->temporal_layer_index;
-    uint8_t max_temporal_layer   = pcs_ptr->parent_pcs_ptr->hierarchical_levels;
-
-    int64_t rdmult = bit_depth == 8 ? av1_lambda_mode_decision8_bit_sse[q_index]
-        : bit_depth == 10           ? av1lambda_mode_decision10_bit_sse[q_index]
-                                    : av1lambda_mode_decision12_bit_sse[q_index];
-
+    uint8_t temporal_layer_index = pcs->parent_pcs_ptr->temporal_layer_index;
+    uint8_t max_temporal_layer   = pcs->parent_pcs_ptr->hierarchical_levels;
+    // Always use q_index for the derivation of the initial rdmult (i.e. don't use me_q_index)
+    int64_t rdmult = svt_aom_compute_rd_mult_based_on_qindex(
+        bit_depth, pcs->parent_pcs_ptr->update_type, q_index);
     // Update rdmult based on the frame's position in the miniGOP
     if (frame_type != KEY_FRAME) {
         uint8_t gf_update_type = temporal_layer_index == 0 ? ARF_UPDATE
@@ -1049,14 +1103,34 @@ int compute_rdmult_sse(PictureControlSet *pcs_ptr, uint8_t q_index, uint8_t bit_
                                                            : LF_UPDATE;
         rdmult                 = (rdmult * rd_frame_type_factor[gf_update_type]) >> 7;
     }
-    assert(pcs_ptr->parent_pcs_ptr->tpl_ctrls.vq_adjust_lambda_sb > 0);
-    int    qdiff = q_index - quantizer_to_qindex[pcs_ptr->parent_pcs_ptr->picture_qp];
-    int8_t qidx  = (qdiff < -8) ? 0 : (qdiff < -4) ? 1 : (qdiff < -2) ? 2 : (qdiff <= 4) ? 3 : 4;
+    if (pcs->scs_ptr->stats_based_sb_lambda_modulation) {
+        if (pcs->temporal_layer_index > 0) {
+            if (pcs->ref_intra_percentage < 5)
+                rdmult = (rdmult * 148) >> 7;
+            else if (pcs->ref_intra_percentage > 50)
+                rdmult = (rdmult * 118) >> 7;
+            else
+                rdmult = (rdmult * 138) >> 7;
+        }
 
-    if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.enable) {
-        rdmult = (rdmult *
-                  q_factor[pcs_ptr->parent_pcs_ptr->tpl_ctrls.vq_adjust_lambda_sb - 1][qidx]) >>
-            7;
+        int factor = 128;
+        if (pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_present) {
+            int qdiff = q_index - pcs->parent_pcs_ptr->frm_hdr.quantization_params.base_q_idx;
+            if (qdiff < 0) {
+                factor = (qdiff <= -8) ? 90 : 115;
+            } else if (qdiff > 0) {
+                factor = (qdiff <= 8) ? 135 : 150;
+            }
+        } else {
+            int qdiff = me_q_index - pcs->parent_pcs_ptr->frm_hdr.quantization_params.base_q_idx;
+            if (qdiff < 0) {
+                factor = (qdiff <= -4) ? 100 : 115;
+            } else if (qdiff > 0) {
+                factor = (qdiff <= 4) ? 135 : 150;
+            }
+        }
+
+        rdmult = (rdmult * factor) >> 7;
     }
     return (int)rdmult;
 }
@@ -1097,11 +1171,18 @@ static void sb_setup_lambda(PictureControlSet *pcs_ptr, SuperBlock *sb_ptr) {
     }
     assert(base_block_count > 0);
 
-    uint8_t bit_depth = pcs_ptr->hbd_mode_decision ? 10 : 8;
+    uint8_t   bit_depth   = pcs_ptr->hbd_mode_decision ? 10 : 8;
+    const int orig_rdmult = svt_aom_compute_rd_mult(
+        pcs_ptr,
+        ppcs_ptr->frm_hdr.quantization_params.base_q_idx,
+        ppcs_ptr->frm_hdr.quantization_params.base_q_idx,
+        bit_depth);
 
-    const int orig_rdmult = compute_rdmult_sse(
-        pcs_ptr, ppcs_ptr->frm_hdr.quantization_params.base_q_idx, bit_depth);
-    const int    new_rdmult     = compute_rdmult_sse(pcs_ptr, sb_ptr->qindex, bit_depth);
+    const int new_rdmult = svt_aom_compute_rd_mult(
+        pcs_ptr,
+        sb_ptr->qindex,
+        svt_aom_get_me_qindex(pcs_ptr, sb_ptr, scs_ptr->seq_header.sb_size == BLOCK_128X128),
+        bit_depth);
     const double scaling_factor = (double)new_rdmult / (double)orig_rdmult;
     //double scale_adj = exp(log(scaling_factor) - log_sum / base_block_count);
     double scale_adj = scaling_factor / exp(log_sum / base_block_count);
@@ -1114,7 +1195,116 @@ static void sb_setup_lambda(PictureControlSet *pcs_ptr, SuperBlock *sb_ptr) {
                 ppcs_ptr->pa_me_data->tpl_rdmult_scaling_factors[index];
         }
     }
-    ppcs_ptr->blk_lambda_tuning = EB_TRUE;
+    ppcs_ptr->blk_lambda_tuning = TRUE;
+}
+#define QPM_MAX_BETA 1.7
+#define QPM_MIN_BETA 0.8
+/******************************************************
+ * sb_qp_derivation
+ * Calculates the QP per SB based on the ME statistics
+ * used in one pass encoding
+ ******************************************************/
+static void sb_qp_derivation(PictureControlSet *pcs) {
+    PictureParentControlSet *ppcs = pcs->parent_pcs_ptr;
+    SequenceControlSet      *scs  = pcs->parent_pcs_ptr->scs_ptr;
+    SuperBlock              *sb;
+    uint32_t                 sb_addr;
+    if ((ppcs->slice_type != I_SLICE) && (ppcs->is_used_as_reference_flag))
+        pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_present = 1;
+    else
+        pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_present = 0;
+    // super res pictures scaled with different sb count, should use sb_total_count for each picture
+    uint16_t sb_cnt = scs->sb_total_count;
+    if (scs->static_config.superres_mode > SUPERRES_NONE)
+        sb_cnt = ppcs->b64_total_count;
+    if (pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_present) {
+        uint64_t avg_me_dist = 0;
+        for (sb_addr = 0; sb_addr < sb_cnt; ++sb_addr) {
+            avg_me_dist += ppcs->me_8x8_cost_variance[sb_addr];
+        }
+        avg_me_dist /= ppcs->b64_total_count;
+        for (sb_addr = 0; sb_addr < sb_cnt; ++sb_addr) {
+            sb               = pcs->sb_ptr_array[sb_addr];
+            double diff_dist = (double)(ppcs->me_8x8_cost_variance[sb_addr] - avg_me_dist);
+            double beta      = (double)(diff_dist / avg_me_dist);
+            beta             = MAX(QPM_MIN_BETA, MIN(beta, QPM_MAX_BETA));
+            int offset       = 0;
+            if (beta) {
+                offset = svt_av1_get_deltaq_offset(scs->static_config.encoder_bit_depth,
+                                                   ppcs->frm_hdr.quantization_params.base_q_idx,
+                                                   beta,
+                                                   pcs->parent_pcs_ptr->slice_type == I_SLICE ||
+                                                       pcs->parent_pcs_ptr->transition_present);
+            }
+            offset     = AOMMIN(offset,
+                            pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res * 9 * 4 - 1);
+            offset     = AOMMAX(offset,
+                            -pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res * 9 * 4 + 1);
+            sb->qindex = CLIP3(
+                pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res,
+                255 - pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res,
+                ((int16_t)ppcs->frm_hdr.quantization_params.base_q_idx + (int16_t)offset));
+        }
+    } else {
+        for (sb_addr = 0; sb_addr < sb_cnt; ++sb_addr) {
+            sb         = pcs->sb_ptr_array[sb_addr];
+            sb->qindex = quantizer_to_qindex[pcs->picture_qp];
+        }
+    }
+}
+
+/*
+* Derives a qindex per 64x64 using ME distortions (to be used for lambda modulation only; not at Q/Q-1)
+*/
+static void generate_b64_me_qindex_map(PictureControlSet *pcs) {
+    PictureParentControlSet *ppcs = pcs->parent_pcs_ptr;
+    uint32_t                 b64_idx;
+
+    int min_offset[MAX_TEMPORAL_LAYERS] = {0, -8, -8, -8, -8, -8};
+    int max_offset[MAX_TEMPORAL_LAYERS] = {0, 8, 8, 8, 8, 8};
+
+    if (min_offset[pcs->parent_pcs_ptr->temporal_layer_index] != 0 ||
+        max_offset[pcs->parent_pcs_ptr->temporal_layer_index] != 0) {
+        uint64_t avg_me_dist = 0;
+        uint64_t min_dist    = (uint64_t)~0;
+        uint64_t max_dist    = 0;
+
+        for (b64_idx = 0; b64_idx < ppcs->b64_total_count; ++b64_idx) {
+            avg_me_dist += ppcs->me_8x8_cost_variance[b64_idx];
+            min_dist = MIN(ppcs->me_8x8_cost_variance[b64_idx], min_dist);
+            max_dist = MAX(ppcs->me_8x8_cost_variance[b64_idx], max_dist);
+        }
+        avg_me_dist /= ppcs->b64_total_count;
+
+        for (b64_idx = 0; b64_idx < ppcs->b64_total_count; ++b64_idx) {
+            int diff_dist = (int)(ppcs->me_8x8_cost_variance[b64_idx] - avg_me_dist);
+            int offset    = 0;
+            if (diff_dist <= 0) {
+                offset = (min_dist != avg_me_dist)
+                    ? (int)((min_offset[pcs->parent_pcs_ptr->temporal_layer_index] * diff_dist) /
+                            (int)(min_dist - avg_me_dist))
+                    : 0;
+            } else {
+                offset = (max_dist != avg_me_dist)
+                    ? (int)((max_offset[pcs->parent_pcs_ptr->temporal_layer_index] * diff_dist) /
+                            (int)(max_dist - avg_me_dist))
+                    : 0;
+            }
+
+            offset                      = AOMMIN(offset,
+                            pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res * 9 * 4 - 1);
+            offset                      = AOMMAX(offset,
+                            -pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res * 9 * 4 + 1);
+            pcs->b64_me_qindex[b64_idx] = CLIP3(
+                pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res,
+                255 - pcs->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res,
+                ((int16_t)ppcs->frm_hdr.quantization_params.base_q_idx + (int16_t)offset));
+        }
+    } else {
+        for (b64_idx = 0; b64_idx < ppcs->b64_total_count; ++b64_idx) {
+            pcs->b64_me_qindex[b64_idx] = ppcs->frm_hdr.quantization_params.base_q_idx;
+        }
+    }
 }
 
 /******************************************************
@@ -1132,19 +1322,21 @@ void sb_qp_derivation_tpl_la(PictureControlSet *pcs_ptr) {
     else
         pcs_ptr->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_present = 0;
     // super res pictures scaled with different sb count, should use sb_total_count for each picture
-    uint16_t sb_cnt = scs_ptr->sb_tot_cnt;
-    if (scs_ptr->static_config.superres_mode > SUPERRES_NONE)
-        sb_cnt = ppcs_ptr->sb_total_count;
+    uint16_t sb_cnt = scs_ptr->sb_total_count;
+    if (ppcs_ptr->frame_superres_enabled || ppcs_ptr->frame_resize_enabled)
+        sb_cnt = ppcs_ptr->b64_total_count;
     if ((pcs_ptr->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_present) &&
         (pcs_ptr->parent_pcs_ptr->tpl_is_valid == 1)) {
         for (sb_addr = 0; sb_addr < sb_cnt; ++sb_addr) {
             sb_ptr        = pcs_ptr->sb_ptr_array[sb_addr];
             double beta   = ppcs_ptr->pa_me_data->tpl_beta[sb_addr];
-            int    offset = svt_av1_get_deltaq_offset(scs_ptr->static_config.encoder_bit_depth,
-                                                   ppcs_ptr->frm_hdr.quantization_params.base_q_idx,
-                                                   beta,
-                                                   pcs_ptr->parent_pcs_ptr->slice_type);
-            offset        = AOMMIN(
+            int    offset = svt_av1_get_deltaq_offset(
+                scs_ptr->static_config.encoder_bit_depth,
+                ppcs_ptr->frm_hdr.quantization_params.base_q_idx,
+                beta,
+                pcs_ptr->parent_pcs_ptr->slice_type == I_SLICE ||
+                    pcs_ptr->parent_pcs_ptr->transition_present == 1);
+            offset = AOMMIN(
                 offset, pcs_ptr->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res * 9 * 4 - 1);
             offset = AOMMAX(
                 offset, -pcs_ptr->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_res * 9 * 4 + 1);
@@ -1231,64 +1423,41 @@ static void av1_rc_init(SequenceControlSet *scs_ptr) {
     EncodeContext              *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL               *rc                 = &encode_context_ptr->rc;
     const RateControlCfg *const rc_cfg             = &encode_context_ptr->rc_cfg;
-    const uint32_t              width              = scs_ptr->seq_header.max_frame_width;
-    const uint32_t              height             = scs_ptr->seq_header.max_frame_height;
     int                         i;
-
-    if ((!(scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-           scs_ptr->static_config.pass == ENC_LAST_PASS) &&
-         scs_ptr->static_config.pass != ENC_FIRST_PASS && rc_cfg->mode == AOM_CBR)) {
+    if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_CBR) {
         rc->avg_frame_qindex[KEY_FRAME]   = rc_cfg->worst_allowed_q;
         rc->avg_frame_qindex[INTER_FRAME] = rc_cfg->worst_allowed_q;
-        rc->frames_till_gf_update_due     = 0;
+        rc->last_q[KEY_FRAME]             = rc_cfg->worst_allowed_q;
+        rc->last_q[INTER_FRAME]           = rc_cfg->worst_allowed_q;
     } else {
         rc->avg_frame_qindex[KEY_FRAME]   = (rc_cfg->worst_allowed_q + rc_cfg->best_allowed_q) / 2;
         rc->avg_frame_qindex[INTER_FRAME] = (rc_cfg->worst_allowed_q + rc_cfg->best_allowed_q) / 2;
+        rc->last_q[KEY_FRAME]             = (rc_cfg->worst_allowed_q + rc_cfg->best_allowed_q) / 2;
+        rc->last_q[INTER_FRAME]           = (rc_cfg->worst_allowed_q + rc_cfg->best_allowed_q) / 2;
     }
     rc->buffer_level    = rc->starting_buffer_level;
     rc->bits_off_target = rc->starting_buffer_level;
 
-    rc->rolling_target_bits    = rc->avg_frame_bandwidth;
-    rc->rolling_actual_bits    = rc->avg_frame_bandwidth;
-    rc->total_actual_bits      = 0;
-    rc->total_target_bits      = 0;
-    rc->total_target_vs_actual = 0;
+    rc->rolling_target_bits = rc->avg_frame_bandwidth;
+    rc->rolling_actual_bits = rc->avg_frame_bandwidth;
+    rc->total_actual_bits   = 0;
+    rc->total_target_bits   = 0;
 
     rc->frames_since_key      = 8; // Sensible default for first frame.
     rc->this_key_frame_forced = 0;
     for (i = 0; i < MAX_TEMPORAL_LAYERS + 1; ++i) { rc->rate_correction_factors[i] = 0.7; }
     rc->rate_correction_factors[KF_STD] = 1.0;
-    rc->min_gf_interval                 = encode_context_ptr->gf_cfg.min_gf_interval;
-    rc->max_gf_interval                 = encode_context_ptr->gf_cfg.max_gf_interval;
-    if (rc->min_gf_interval == 0)
-        rc->min_gf_interval = svt_av1_rc_get_default_min_gf_interval(
-            width,
-            height, /*oxcf->frm_dim_cfg.width, oxcf->frm_dim_cfg.height,*/
-            scs_ptr->double_frame_rate /*oxcf->input_cfg.init_framerate*/);
-    if (rc->max_gf_interval == 0)
-        rc->max_gf_interval = svt_av1_rc_get_default_max_gf_interval(
-            scs_ptr->double_frame_rate /*oxcf->input_cfg.init_framerate*/, rc->min_gf_interval);
-    rc->baseline_gf_interval = (rc->min_gf_interval + rc->max_gf_interval) / 2;
-    //rc->avg_frame_low_motion = 0;
+    rc->baseline_gf_interval            = 1 << scs_ptr->static_config.hierarchical_levels;
 
     // Set absolute upper and lower quality limits
     rc->worst_quality = rc_cfg->worst_allowed_q;
     rc->best_quality  = rc_cfg->best_allowed_q;
-    if (!(scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-          scs_ptr->static_config.pass == ENC_LAST_PASS) &&
-        scs_ptr->static_config.pass != ENC_FIRST_PASS && rc_cfg->mode == AOM_CBR) {
-        if (scs_ptr->static_config.pred_structure == EB_PRED_LOW_DELAY_P) {
-            rc->onepass_cbr_mode = 2;
-        } else {
-            rc->onepass_cbr_mode = 1;
-        }
+    if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_CBR) {
+        rc->onepass_cbr_mode = 1;
     } else {
         rc->onepass_cbr_mode = 0;
     }
-    if (scs_ptr->lap_enabled ||
-        (!(scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-           scs_ptr->static_config.pass == ENC_LAST_PASS) &&
-         scs_ptr->static_config.pass != ENC_FIRST_PASS && rc_cfg->mode == AOM_CBR)) {
+    if (scs_ptr->static_config.rate_control_mode) {
         double frame_rate = (double)scs_ptr->static_config.frame_rate_numerator /
             (double)scs_ptr->static_config.frame_rate_denominator;
         // Each frame can have a different duration, as the frame rate in the source
@@ -1302,51 +1471,44 @@ static void av1_rc_init(SequenceControlSet *scs_ptr) {
 
 #define MIN_BOOST_COMBINE_FACTOR 4.0
 #define MAX_BOOST_COMBINE_FACTOR 12.0
-void process_tpl_stats_frame_kf_gfu_boost(PictureControlSet *pcs_ptr) {
-    SequenceControlSet *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
-    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
-    RATE_CONTROL *const rc                 = &encode_context_ptr->rc;
+/******************************************************************************
+* process_tpl_stats_frame_kf_gfu_boost
+* update r0, calculate kf and gfu boosts for VBR
+*******************************************************************************/
+void process_tpl_stats_frame_kf_gfu_boost(PictureControlSet *pcs) {
+    PictureParentControlSet *ppcs               = pcs->parent_pcs_ptr;
+    SequenceControlSet      *scs                = ppcs->scs_ptr;
+    EncodeContext           *encode_context_ptr = scs->encode_context_ptr;
+    RATE_CONTROL *const      rc                 = &encode_context_ptr->rc;
     // The new tpl only looks at pictures in tpl group, which is fewer than before,
     // As a results, we defined a factor to adjust r0
-    if (pcs_ptr->parent_pcs_ptr->slice_type != 2) {
-        double div_factor = 1;
-        if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.r0_adjust_factor) {
-            div_factor = pcs_ptr->parent_pcs_ptr->used_tpl_frame_num *
-                pcs_ptr->parent_pcs_ptr->tpl_ctrls.r0_adjust_factor;
+    if (!frame_is_intra_only(ppcs)) {
+        if (ppcs->tpl_ctrls.r0_adjust_factor) {
+            double div_factor = ppcs->used_tpl_frame_num * ppcs->tpl_ctrls.r0_adjust_factor;
+            ppcs->r0          = ppcs->r0 / div_factor;
+            // Further scale r0 based on the GOP structure
+            ppcs->r0 = ppcs->r0 / tpl_hl_base_frame_div_factor[scs->max_heirachical_level];
         }
-
-        pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 / div_factor;
-    } else if (pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type != KEY_FRAME) {
-        double factor               = 2;
-        pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 / factor;
+        rc->gfu_boost = get_gfu_boost_from_r0_lap(
+            MIN_BOOST_COMBINE_FACTOR, MAX_GFUBOOST_FACTOR, ppcs->r0, rc->frames_to_key);
     }
-    rc->gfu_boost = get_gfu_boost_from_r0_lap(MIN_BOOST_COMBINE_FACTOR,
-                                              MAX_GFUBOOST_FACTOR,
-                                              pcs_ptr->parent_pcs_ptr->r0,
-                                              rc->frames_to_key);
-    if (pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type == KEY_FRAME) {
-        pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 /
-            tpl_hl_islice_div_factor[scs_ptr->static_config.hierarchical_levels];
-        if (pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type == KEY_FRAME) {
-            {
-                double factor = 1.0;
-                if (pcs_ptr->parent_pcs_ptr->r0 < 0.2) {
-                    double mult = 1.0;
-                    factor      = (double)(mult * 255.0) / rc->active_worst_quality;
-                }
-                pcs_ptr->parent_pcs_ptr->r0 = pcs_ptr->parent_pcs_ptr->r0 / factor;
-            }
+
+    if (ppcs->frm_hdr.frame_type == KEY_FRAME) {
+        if (ppcs->tpl_ctrls.r0_adjust_factor) {
+            const double div_factor = ppcs->used_tpl_frame_num * ppcs->tpl_ctrls.r0_adjust_factor;
+            ppcs->r0                = ppcs->r0 / div_factor;
         }
+        // Scale r0 based on the GOP structure
+        ppcs->r0 = ppcs->r0 / tpl_hl_islice_div_factor[scs->max_heirachical_level];
+
         // when frames_to_key not available, i.e. in 1 pass encoding
-        rc->kf_boost = get_cqp_kf_boost_from_r0(
-            pcs_ptr->parent_pcs_ptr->r0, rc->frames_to_key, scs_ptr->input_resolution);
-        int max_boost = pcs_ptr->parent_pcs_ptr->used_tpl_frame_num * KB;
+        rc->kf_boost = get_cqp_kf_boost_from_r0(ppcs->r0, rc->frames_to_key, scs->input_resolution);
+        int max_boost = ppcs->used_tpl_frame_num * KB;
         rc->kf_boost  = AOMMIN(rc->kf_boost, max_boost);
     }
 }
-
 static void get_intra_q_and_bounds(PictureControlSet *pcs_ptr, int *active_best, int *active_worst,
-                                   int cq_level, int is_fwd_kf) {
+                                   int is_fwd_kf) {
     SequenceControlSet *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
@@ -1354,14 +1516,7 @@ static void get_intra_q_and_bounds(PictureControlSet *pcs_ptr, int *active_best,
     int                 active_best_quality;
     int                 active_worst_quality = *active_worst;
     const int           bit_depth            = scs_ptr->static_config.encoder_bit_depth;
-
-    if (rc->frames_to_key <= 1 && encode_context_ptr->rc_cfg.mode == AOM_Q) {
-        // If the next frame is also a key frame or the current frame is the
-        // only frame in the sequence in AOM_Q mode, just use the cq_level
-        // as q.
-        active_best_quality  = cq_level;
-        active_worst_quality = cq_level;
-    } else if (is_fwd_kf) {
+    if (is_fwd_kf) {
         // Handle the special case for forward reference key frames.
         // Increase the boost because this keyframe is used as a forward and
         // backward reference.
@@ -1395,19 +1550,6 @@ static void get_intra_q_and_bounds(PictureControlSet *pcs_ptr, int *active_best,
         // on active_best_quality.
         q_val = svt_av1_convert_qindex_to_q(active_best_quality, bit_depth);
         active_best_quality += svt_av1_compute_qdelta(q_val, q_val * q_adj_factor, bit_depth);
-
-        // Tweak active_best_quality for AOM_Q mode when superres is on, as this
-        // will be used directly as 'q' later.
-        if (encode_context_ptr->rc_cfg.mode == AOM_Q &&
-            (scs_ptr->static_config.superres_mode == SUPERRES_QTHRESH ||
-             scs_ptr->static_config.superres_mode == SUPERRES_AUTO) &&
-            pcs_ptr->parent_pcs_ptr->superres_denom != SCALE_NUMERATOR) {
-            active_best_quality = AOMMAX(
-                active_best_quality -
-                    ((pcs_ptr->parent_pcs_ptr->superres_denom - SCALE_NUMERATOR) *
-                     SUPERRES_QADJ_PER_DENOM_KEYFRAME),
-                0);
-        }
     }
 
     *active_best  = active_best_quality;
@@ -1416,41 +1558,25 @@ static void get_intra_q_and_bounds(PictureControlSet *pcs_ptr, int *active_best,
 }
 
 // Returns |active_best_quality| for an inter frame.
-// The |active_best_quality| depends on different rate control modes:
-// VBR, Q, CQ, CBR.
 // The returning active_best_quality could further be adjusted in
 // adjust_active_best_and_worst_quality().
-static int get_active_best_quality(PictureControlSet *pcs_ptr, const int active_worst_quality,
-                                   const int cq_level) {
+static int get_active_best_quality(PictureControlSet *pcs_ptr, const int active_worst_quality) {
     SequenceControlSet    *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
     EncodeContext         *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL          *rc                 = &encode_context_ptr->rc;
     const enum aom_rc_mode rc_mode            = encode_context_ptr->rc_cfg.mode;
-    GF_GROUP *const        gf_group           = &encode_context_ptr->gf_group;
     const int              bit_depth          = scs_ptr->static_config.encoder_bit_depth;
-    //int rf_level, update_type;
-    const RefreshFrameFlagsInfo *const refresh_frame_flags =
-        &pcs_ptr->parent_pcs_ptr->refresh_frame;
-    const int is_intrl_arf_boost = gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index] ==
-        INTNL_ARF_UPDATE;
-    int *inter_minq;
+    const int is_intrl_arf_boost = pcs_ptr->parent_pcs_ptr->update_type == INTNL_ARF_UPDATE;
+    int      *inter_minq;
     ASSIGN_MINQ_TABLE(bit_depth, inter_minq);
     int       active_best_quality = 0;
-    const int is_leaf_frame       = !(refresh_frame_flags->golden_frame ||
-                                refresh_frame_flags->alt_ref_frame || is_intrl_arf_boost);
-    const int is_overlay_frame    = pcs_ptr->parent_pcs_ptr->is_overlay; //rc->is_src_frame_alt_ref;
+    const int is_leaf_frame       = !(pcs_ptr->parent_pcs_ptr->update_type == GF_UPDATE ||
+                                pcs_ptr->parent_pcs_ptr->update_type == ARF_UPDATE ||
+                                is_intrl_arf_boost);
+    const int is_overlay_frame    = pcs_ptr->parent_pcs_ptr->is_overlay;
 
     if (is_leaf_frame || is_overlay_frame) {
-        if (rc_mode == AOM_Q)
-            return cq_level;
-
-        active_best_quality = inter_minq[active_worst_quality];
-        // For the constrained quality mode we don't want
-        // q to fall below the cq level.
-        if ((rc_mode == AOM_CQ) && (active_best_quality < cq_level)) {
-            active_best_quality = cq_level;
-        }
-        return active_best_quality;
+        return inter_minq[active_worst_quality];
     }
     // Determine active_best_quality for frames that are not leaf or overlay.
     int q = active_worst_quality;
@@ -1461,12 +1587,7 @@ static int get_active_best_quality(PictureControlSet *pcs_ptr, const int active_
         rc->avg_frame_qindex[INTER_FRAME] < active_worst_quality) {
         q = rc->avg_frame_qindex[INTER_FRAME];
     }
-    if (rc_mode == AOM_CQ && q < cq_level)
-        q = cq_level;
     active_best_quality = get_gf_active_quality_tpl_la(rc, q, bit_depth);
-    // Constrained quality use slightly lower active best.
-    if (rc_mode == AOM_CQ)
-        active_best_quality = active_best_quality * 15 / 16;
     const int min_boost = get_gf_high_motion_quality(q, bit_depth);
     const int boost     = min_boost - active_best_quality;
 
@@ -1478,11 +1599,7 @@ static int get_active_best_quality(PictureControlSet *pcs_ptr, const int active_
     if (!is_intrl_arf_boost)
         return active_best_quality;
 
-    if (rc_mode == AOM_Q || rc_mode == AOM_CQ)
-        active_best_quality = rc->arf_q;
-    int this_height =
-        gf_group->layer_depth[pcs_ptr->parent_pcs_ptr
-                                  ->gf_group_index]; //gf_group_pyramid_level(gf_group, gf_index);
+    int this_height = pcs_ptr->parent_pcs_ptr->layer_depth;
     while (this_height > 1) {
         active_best_quality = (active_best_quality + active_worst_quality + 1) / 2;
         --this_height;
@@ -1490,60 +1607,66 @@ static int get_active_best_quality(PictureControlSet *pcs_ptr, const int active_
     return active_best_quality;
 }
 
-static double get_rate_correction_factor(PictureParentControlSet *ppcs_ptr/*,
-                                         int width, int height*/) {
-    SequenceControlSet                *scs_ptr             = ppcs_ptr->scs_ptr;
-    EncodeContext                     *encode_context_ptr  = scs_ptr->encode_context_ptr;
-    RATE_CONTROL                      *rc                  = &encode_context_ptr->rc;
-    const RefreshFrameFlagsInfo *const refresh_frame_flags = &ppcs_ptr->refresh_frame;
-    double                             rcf;
-
-    if (ppcs_ptr->frm_hdr.frame_type == KEY_FRAME) {
-        rcf = rc->rate_correction_factors[KF_STD];
-    } else if (scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-               scs_ptr->static_config.pass == ENC_LAST_PASS || scs_ptr->lap_enabled) {
-        const rate_factor_level rf_lvl = ppcs_ptr->temporal_layer_index + 1;
+static double get_rate_correction_factor(PictureParentControlSet *ppcs_ptr, int width, int height) {
+    SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
+    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
+    RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
+    svt_block_on_mutex(rc->rc_mutex);
+    double rcf;
+    if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_VBR) {
+        const rate_factor_level rf_lvl = ppcs_ptr->frm_hdr.frame_type == KEY_FRAME
+            ? 0
+            : ppcs_ptr->temporal_layer_index + 1;
         rcf                            = rc->rate_correction_factors[rf_lvl];
     } else {
-        if ((refresh_frame_flags->alt_ref_frame || refresh_frame_flags->golden_frame) &&
-            !rc->is_src_frame_alt_ref && //!cpi->use_svc &&
-            (encode_context_ptr->rc_cfg.mode != AOM_CBR ||
-             encode_context_ptr->rc_cfg.gf_cbr_boost_pct > 20))
+        if (ppcs_ptr->frm_hdr.frame_type == KEY_FRAME) {
+            rcf = rc->rate_correction_factors[KF_STD];
+        } else if ((ppcs_ptr->update_type == GF_UPDATE || ppcs_ptr->update_type == ARF_UPDATE) &&
+                   !ppcs_ptr->is_overlay &&
+                   (encode_context_ptr->rc_cfg.mode != AOM_CBR ||
+                    encode_context_ptr->rc_cfg.gf_cbr_boost_pct > 20))
             rcf = rc->rate_correction_factors[GF_ARF_STD];
         else
             rcf = rc->rate_correction_factors[INTER_NORMAL];
     }
-    //rcf *= resize_rate_factor(&cpi->oxcf.frm_dim_cfg, width, height);
+    rcf *= (double)(ppcs_ptr->av1_cm->frm_size.frame_width *
+                    ppcs_ptr->av1_cm->frm_size.frame_height) /
+        (width * height);
+    svt_release_mutex(rc->rc_mutex);
     return fclamp(rcf, MIN_BPB_FACTOR, MAX_BPB_FACTOR);
 }
 
-static void set_rate_correction_factor(PictureParentControlSet *ppcs_ptr, double factor/*,
-                                       int width, int height*/) {
-    SequenceControlSet                *scs_ptr             = ppcs_ptr->scs_ptr;
-    EncodeContext                     *encode_context_ptr  = scs_ptr->encode_context_ptr;
-    RATE_CONTROL                      *rc                  = &encode_context_ptr->rc;
-    const RefreshFrameFlagsInfo *const refresh_frame_flags = &ppcs_ptr->refresh_frame;
+static void set_rate_correction_factor(PictureParentControlSet *ppcs_ptr, double factor, int width,
+                                       int height) {
+    SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
+    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
+    RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
+    svt_block_on_mutex(rc->rc_mutex);
 
     // Normalize RCF to account for the size-dependent scaling factor.
-    //factor /= resize_rate_factor(&cpi->oxcf.frm_dim_cfg, width, height);
+    factor /= (double)(ppcs_ptr->av1_cm->frm_size.frame_width *
+                       ppcs_ptr->av1_cm->frm_size.frame_height) /
+        (width * height);
 
     factor = fclamp(factor, MIN_BPB_FACTOR, MAX_BPB_FACTOR);
 
-    if (ppcs_ptr->frm_hdr.frame_type == KEY_FRAME) {
-        rc->rate_correction_factors[KF_STD] = factor;
-    } else if (scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-               scs_ptr->static_config.pass == ENC_LAST_PASS || scs_ptr->lap_enabled) {
-        const rate_factor_level rf_lvl      = ppcs_ptr->temporal_layer_index + 1;
+    if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_VBR) {
+        const rate_factor_level rf_lvl      = ppcs_ptr->frm_hdr.frame_type == KEY_FRAME
+                 ? 0
+                 : ppcs_ptr->temporal_layer_index + 1;
         rc->rate_correction_factors[rf_lvl] = factor;
     } else {
-        if ((refresh_frame_flags->alt_ref_frame || refresh_frame_flags->golden_frame) &&
-            !rc->is_src_frame_alt_ref && //!cpi->use_svc &&
-            (encode_context_ptr->rc_cfg.mode != AOM_CBR ||
-             encode_context_ptr->rc_cfg.gf_cbr_boost_pct > 20))
+        if (ppcs_ptr->frm_hdr.frame_type == KEY_FRAME) {
+            rc->rate_correction_factors[KF_STD] = factor;
+        } else if ((ppcs_ptr->update_type == GF_UPDATE || ppcs_ptr->update_type == ARF_UPDATE) &&
+                   !ppcs_ptr->is_overlay &&
+                   (encode_context_ptr->rc_cfg.mode != AOM_CBR ||
+                    encode_context_ptr->rc_cfg.gf_cbr_boost_pct > 20))
             rc->rate_correction_factors[GF_ARF_STD] = factor;
         else
             rc->rate_correction_factors[INTER_NORMAL] = factor;
     }
+    svt_release_mutex(rc->rc_mutex);
 }
 
 // Calculate rate for the given 'q'.
@@ -1559,7 +1682,6 @@ static int get_bits_per_mb(PictureParentControlSet *ppcs_ptr, int use_cyclic_ref
                                  ppcs_ptr->sc_class1,
                                  scs_ptr->encode_context_ptr->rc.onepass_cbr_mode);
 }
-//anaghdin --> update this if desired is less than cur_bit_diff by far
 // Similar to find_qindex_by_rate() function in ratectrl.c, but returns the q
 // index with rate just above or below the desired rate, depending on which of
 // the two rates is closer to the desired rate.
@@ -1567,9 +1689,7 @@ static int get_bits_per_mb(PictureParentControlSet *ppcs_ptr, int use_cyclic_ref
 static int find_closest_qindex_by_rate(int desired_bits_per_mb, PictureParentControlSet *ppcs_ptr,
                                        double correction_factor, int best_qindex,
                                        int worst_qindex) {
-    const int use_cyclic_refresh = 0 /*cpi->oxcf.q_cfg.aq_mode == CYCLIC_REFRESH_AQ &&
-                                 cpi->cyclic_refresh->apply_cyclic_refresh*/
-        ;
+    const int use_cyclic_refresh = 0;
 
     // Find 'qindex' based on 'desired_bits_per_mb'.
     assert(best_qindex <= worst_qindex);
@@ -1612,34 +1732,26 @@ static int find_closest_qindex_by_rate(int desired_bits_per_mb, PictureParentCon
     // the desired rate.
     return (curr_bit_diff <= prev_bit_diff) ? curr_q : prev_q;
 }
-
-static int adjust_q_cbr(PictureParentControlSet *ppcs_ptr, int q /*, int active_worst_quality*/) {
+int max_delta_per_layer[MAX_HIERARCHICAL_LEVEL][MAX_TEMPORAL_LAYERS] = {
+    {60}, {60, 5}, {60, 5, 2}, {60, 5, 2, 2}, {60, 5, 2, 2, 2}, {60, 5, 2, 2, 2, 2}};
+static int adjust_q_cbr(PictureParentControlSet *ppcs_ptr, int q) {
     SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
-    //const AV1_COMMON *const cm = &cpi->common;
-    const RefreshFrameFlagsInfo *const refresh_frame_flags        = &ppcs_ptr->refresh_frame;
-    const int                          max_delta                  = 16;
-    const int                          change_avg_frame_bandwidth = abs(rc->avg_frame_bandwidth -
+    const int           max_delta =
+        max_delta_per_layer[ppcs_ptr->hierarchical_levels][ppcs_ptr->temporal_layer_index];
+    const int change_avg_frame_bandwidth = abs(rc->avg_frame_bandwidth -
                                                rc->prev_avg_frame_bandwidth) >
         0.1 * (rc->avg_frame_bandwidth);
     // If resolution changes or avg_frame_bandwidth significantly changed,
     // then set this flag to indicate change in target bits per macroblock.
-    const int change_target_bits_mb =
-        /*cm->prev_frame &&
-      (cm->width != cm->prev_frame->width ||
-       cm->height != cm->prev_frame->height || */
-        change_avg_frame_bandwidth;
+    const int change_target_bits_mb = change_avg_frame_bandwidth;
     // Apply some control/clamp to QP under certain conditions.
     if (ppcs_ptr->frm_hdr.frame_type != KEY_FRAME && /*!cpi->use_svc &&*/
         rc->frames_since_key > 1 && !change_target_bits_mb &&
         (!encode_context_ptr->rc_cfg.gf_cbr_boost_pct ||
-         !(refresh_frame_flags->alt_ref_frame || refresh_frame_flags->golden_frame))) {
+         !(ppcs_ptr->update_type == GF_UPDATE || ppcs_ptr->update_type == ARF_UPDATE))) {
         // Make sure q is between oscillating Qs to prevent resonance.
-        if (rc->rc_1_frame * rc->rc_2_frame == -1 && rc->q_1_frame != rc->q_2_frame) {
-            q = clamp(
-                q, AOMMIN(rc->q_1_frame, rc->q_2_frame), AOMMAX(rc->q_1_frame, rc->q_2_frame));
-        }
         // Limit the decrease in Q from previous frame.
         if (rc->q_1_frame - q > max_delta)
             q = rc->q_1_frame - max_delta;
@@ -1652,7 +1764,7 @@ static int av1_rc_regulate_q(PictureParentControlSet *ppcs_ptr, int target_bits_
                              int active_best_quality, int active_worst_quality, int width,
                              int height) {
     const int    MBs = ((width + 15) / 16) * ((height + 15) / 16); //av1_get_MBs(width, height);
-    const double correction_factor  = get_rate_correction_factor(ppcs_ptr /*, width, height*/);
+    const double correction_factor  = get_rate_correction_factor(ppcs_ptr, width, height);
     const int    target_bits_per_mb = (int)(((uint64_t)target_bits_per_frame << BPER_MB_NORMBITS) /
                                          MBs);
 
@@ -1660,11 +1772,8 @@ static int av1_rc_regulate_q(PictureParentControlSet *ppcs_ptr, int target_bits_
         target_bits_per_mb, ppcs_ptr, correction_factor, active_best_quality, active_worst_quality);
     SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
-    if (!(scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-          scs_ptr->static_config.pass == ENC_LAST_PASS) &&
-        scs_ptr->static_config.pass != ENC_FIRST_PASS &&
-        encode_context_ptr->rc_cfg.mode == AOM_CBR) {
-        return adjust_q_cbr(ppcs_ptr, q /*, active_worst_quality*/);
+    if (encode_context_ptr->rc_cfg.mode == AOM_CBR) {
+        return adjust_q_cbr(ppcs_ptr, q);
     }
 
     return q;
@@ -1672,17 +1781,15 @@ static int av1_rc_regulate_q(PictureParentControlSet *ppcs_ptr, int target_bits_
 
 static int get_q(PictureControlSet *pcs_ptr, const int active_worst_quality,
                  const int active_best_quality) {
-    SequenceControlSet    *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
-    EncodeContext         *encode_context_ptr = scs_ptr->encode_context_ptr;
-    RATE_CONTROL          *rc                 = &encode_context_ptr->rc;
-    TWO_PASS *const        twopass            = &scs_ptr->twopass;
-    const enum aom_rc_mode rc_mode            = encode_context_ptr->rc_cfg.mode;
-    const int              width  = pcs_ptr->parent_pcs_ptr->av1_cm->frm_size.frame_width;
-    const int              height = pcs_ptr->parent_pcs_ptr->av1_cm->frm_size.frame_height;
-    int                    q;
-    if (rc_mode == AOM_Q ||
-        (frame_is_intra_only(pcs_ptr->parent_pcs_ptr) &&
-         twopass->kf_zeromotion_pct >= STATIC_KF_GROUP_THRESH && rc->frames_to_key > 1)) {
+    SequenceControlSet *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
+    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
+    RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
+    TWO_PASS *const     twopass            = &scs_ptr->twopass;
+    const int           width              = pcs_ptr->parent_pcs_ptr->av1_cm->frm_size.frame_width;
+    const int           height             = pcs_ptr->parent_pcs_ptr->av1_cm->frm_size.frame_height;
+    int                 q;
+    if (frame_is_intra_only(pcs_ptr->parent_pcs_ptr) &&
+        twopass->kf_zeromotion_pct >= STATIC_KF_GROUP_THRESH && rc->frames_to_key > 1) {
         q = active_best_quality;
     } else {
         q = av1_rc_regulate_q(pcs_ptr->parent_pcs_ptr,
@@ -1762,15 +1869,15 @@ static int calc_active_worst_quality_no_stats_cbr(PictureParentControlSet *ppcs_
 }
 
 // Calculate the active_best_quality level.
-static int calc_active_best_quality_no_stats_cbr(PictureParentControlSet *ppcs_ptr,
+static int calc_active_best_quality_no_stats_cbr(PictureControlSet *pcs_ptr,
                                                  int active_worst_quality, int width, int height) {
-    SequenceControlSet                *scs_ptr             = ppcs_ptr->scs_ptr;
-    EncodeContext                     *encode_context_ptr  = scs_ptr->encode_context_ptr;
-    RATE_CONTROL                      *rc                  = &encode_context_ptr->rc;
-    const RefreshFrameFlagsInfo *const refresh_frame_flags = &ppcs_ptr->refresh_frame;
-    int                               *rtc_minq;
-    const int                          bit_depth = scs_ptr->static_config.encoder_bit_depth;
-    int                                active_best_quality = rc->best_quality;
+    PictureParentControlSet *ppcs_ptr           = pcs_ptr->parent_pcs_ptr;
+    SequenceControlSet      *scs_ptr            = ppcs_ptr->scs_ptr;
+    EncodeContext           *encode_context_ptr = scs_ptr->encode_context_ptr;
+    RATE_CONTROL            *rc                 = &encode_context_ptr->rc;
+    int                     *rtc_minq;
+    const int                bit_depth           = scs_ptr->static_config.encoder_bit_depth;
+    int                      active_best_quality = rc->best_quality;
     ASSIGN_MINQ_TABLE(bit_depth, rtc_minq);
 
     if (frame_is_intra_only(ppcs_ptr)) {
@@ -1792,18 +1899,40 @@ static int calc_active_best_quality_no_stats_cbr(PictureParentControlSet *ppcs_p
             //    av1_compute_qdelta(rc, q_val, q_val * q_adj_factor, bit_depth);
             active_best_quality += svt_av1_compute_qdelta(q_val, q_val * q_adj_factor, bit_depth);
         }
-    } else if (!rc->is_src_frame_alt_ref /*&& !cpi->use_svc */ &&
-               encode_context_ptr->rc_cfg.gf_cbr_boost_pct &&
-               (refresh_frame_flags->golden_frame || refresh_frame_flags->alt_ref_frame)) {
-        // Use the lower of active_worst_quality and recent
-        // average Q as basis for GF/ARF best Q limit unless last frame was
-        // a key frame.
-        int q = active_worst_quality;
-        if (rc->frames_since_key > 1 && rc->avg_frame_qindex[INTER_FRAME] < active_worst_quality) {
-            q = rc->avg_frame_qindex[INTER_FRAME];
+    } else if (!ppcs_ptr->is_overlay && ppcs_ptr->is_used_as_reference_flag) {
+        // Inherit qp from reference qps.
+        EbReferenceObject *ref_obj_l0 =
+            (EbReferenceObject *)pcs_ptr->ref_pic_ptr_array[REF_LIST_0][0]->object_ptr;
+        EbReferenceObject *ref_obj_l1 = NULL;
+        if (ppcs_ptr->slice_type == B_SLICE)
+            ref_obj_l1 = (EbReferenceObject *)pcs_ptr->ref_pic_ptr_array[REF_LIST_1][0]->object_ptr;
+
+        //Derive the temporal layer of the reference picture
+        uint8_t ref_tmp_layer = ref_obj_l0->tmp_layer_idx;
+        if (ppcs_ptr->slice_type == B_SLICE) {
+            if (ref_obj_l1->tmp_layer_idx > ref_tmp_layer) {
+                ref_tmp_layer = ref_obj_l1->tmp_layer_idx;
+            }
         }
-        //active_best_quality = get_gf_active_quality(rc, q, bit_depth);
-        active_best_quality = get_gf_active_quality_tpl_la(rc, q, bit_depth);
+        rc->arf_q = 0;
+        rc->arf_q = MAX(rc->arf_q, ((pcs_ptr->ref_pic_qp_array[0][0] << 2) + 2));
+        if (pcs_ptr->slice_type == B_SLICE)
+            rc->arf_q = MAX(rc->arf_q, ((pcs_ptr->ref_pic_qp_array[1][0] << 2) + 2));
+        int ip = ppcs_ptr->scs_ptr->static_config.intra_period_length;
+        if (ip == -1 || ip > 64)
+            active_best_quality = MIN(active_best_quality, rc->arf_q);
+        else
+            active_best_quality = rc->arf_q;
+        int q = active_worst_quality;
+        q     = get_gf_active_quality_tpl_la(rc, q, bit_depth);
+        // Adjust wors and boost QP based on the average sad of the current picture
+        int8_t tmp_layer_delta = (int8_t)pcs_ptr->parent_pcs_ptr->temporal_layer_index -
+            (int8_t)ref_tmp_layer;
+        // active_best_quality is updated with the q index of the reference
+        while (tmp_layer_delta > 0) {
+            active_best_quality = (active_best_quality + q + 1) / 2;
+            tmp_layer_delta--;
+        }
     } else {
         // Use the lower of active_worst_quality and recent/average Q.
         svt_block_on_mutex(encode_context_ptr->frame_updated_mutex);
@@ -1817,18 +1946,61 @@ static int calc_active_best_quality_no_stats_cbr(PictureParentControlSet *ppcs_p
     return active_best_quality;
 }
 
+void svt_av1_resize_reset_rc(PictureParentControlSet *ppcs_ptr, int32_t resize_width,
+                             int32_t resize_height, int32_t prev_width, int32_t prev_height) {
+    SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
+    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
+    RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
+    int32_t             target_bits_per_frame;
+    int32_t             active_worst_quality;
+    int32_t             qindex;
+    double              tot_scale_change = (double)(resize_width * resize_height) /
+        (double)(prev_width * prev_height);
+    // Reset buffer level to optimal, update target size.
+    reset_update_frame_target(ppcs_ptr);
+    target_bits_per_frame = ppcs_ptr->this_frame_target;
+    if (tot_scale_change > 4.0)
+        rc->avg_frame_qindex[INTER_FRAME] = rc->worst_quality;
+    else if (tot_scale_change > 1.0)
+        rc->avg_frame_qindex[INTER_FRAME] = (rc->avg_frame_qindex[INTER_FRAME] +
+                                             rc->worst_quality) >>
+            1;
+    active_worst_quality = calc_active_worst_quality_no_stats_cbr(ppcs_ptr);
+    qindex               = av1_rc_regulate_q(ppcs_ptr,
+                               target_bits_per_frame,
+                               rc->best_quality,
+                               active_worst_quality,
+                               resize_width,
+                               resize_height);
+    // If resize is down, check if projected q index is close to worst_quality,
+    // and if so, reduce the rate correction factor (since likely can afford
+    // lower q for resized frame).
+    if (tot_scale_change < 1.0 && qindex > 90 * rc->worst_quality / 100)
+        rc->rate_correction_factors[INTER_NORMAL] *= 0.85;
+    // If resize is back up: check if projected q index is too much above the
+    // previous index, and if so, reduce the rate correction factor
+    // (since prefer to keep q for resized frame at least closet to previous q).
+    // Also check if projected qindex is close to previous qindex, if so
+    // increase correction factor (to push qindex higher and avoid overshoot).
+    if (tot_scale_change >= 1.0) {
+        if (tot_scale_change < 4.0 && qindex > 130 * rc->last_q[INTER_FRAME] / 100)
+            rc->rate_correction_factors[INTER_NORMAL] *= 0.8;
+        if (qindex <= 120 * rc->last_q[INTER_FRAME] / 100)
+            rc->rate_correction_factors[INTER_NORMAL] *= 2.0;
+    }
+}
+#define QFACTOR 1.4
 static int rc_pick_q_and_bounds_no_stats_cbr(PictureControlSet *pcs_ptr) {
     SequenceControlSet *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
-    GF_GROUP *const     gf_group           = &encode_context_ptr->gf_group;
     int                 q;
     const int           bit_depth = scs_ptr->static_config.encoder_bit_depth;
     const int           width     = pcs_ptr->parent_pcs_ptr->av1_cm->frm_size.frame_width;
     const int           height    = pcs_ptr->parent_pcs_ptr->av1_cm->frm_size.frame_height;
     int active_worst_quality      = calc_active_worst_quality_no_stats_cbr(pcs_ptr->parent_pcs_ptr);
     int active_best_quality       = calc_active_best_quality_no_stats_cbr(
-        pcs_ptr->parent_pcs_ptr, active_worst_quality, width, height);
+        pcs_ptr, active_worst_quality, width, height);
     assert(encode_context_ptr->rc_cfg.mode == AOM_CBR);
 
     // Clip the active best and worst quality values to limits
@@ -1879,9 +2051,29 @@ static int rc_pick_q_and_bounds_no_stats_cbr(PictureControlSet *pcs_ptr) {
     assert(pcs_ptr->parent_pcs_ptr->bottom_index <= rc->worst_quality &&
            pcs_ptr->parent_pcs_ptr->bottom_index >= rc->best_quality);
     assert(q <= rc->worst_quality && q >= rc->best_quality);
-
-    if (gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index] == ARF_UPDATE)
+    if (pcs_ptr->parent_pcs_ptr->update_type == ARF_UPDATE)
         rc->arf_q = q;
+    const int ip = pcs_ptr->scs_ptr->static_config.intra_period_length;
+    // if short intra refresh
+    if (ip > -1 && ip < 256) {
+        if (pcs_ptr->slice_type == I_SLICE) {
+            int q1 = pcs_ptr->picture_number == 0 ? q + 20 : rc->q_1_frame;
+            q      = (q + q1) / 2;
+        } else if (pcs_ptr->slice_type != I_SLICE &&
+                   pcs_ptr->parent_pcs_ptr->temporal_layer_index == 0) {
+            int qdelta = 0;
+#ifdef ARCH_X86_64
+            aom_clear_system_state();
+#endif
+            qdelta = svt_av1_compute_qdelta_by_rate(rc,
+                                                    pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type,
+                                                    active_worst_quality,
+                                                    QFACTOR,
+                                                    bit_depth,
+                                                    pcs_ptr->parent_pcs_ptr->sc_class1);
+            q      = q + qdelta;
+        }
+    }
     return q;
 }
 
@@ -1891,46 +2083,56 @@ static int rc_pick_q_and_bounds_no_stats_cbr(PictureControlSet *pcs_ptr) {
  * used in the second pass of two pass encoding
  ******************************************************/
 static int rc_pick_q_and_bounds(PictureControlSet *pcs_ptr) {
-    SequenceControlSet                *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
-    EncodeContext                     *encode_context_ptr = scs_ptr->encode_context_ptr;
-    RATE_CONTROL                      *rc                 = &encode_context_ptr->rc;
-    GF_GROUP *const                    gf_group           = &encode_context_ptr->gf_group;
-    const RefreshFrameFlagsInfo *const refresh_frame_flags =
-        &pcs_ptr->parent_pcs_ptr->refresh_frame;
-    const enum aom_rc_mode rc_mode              = encode_context_ptr->rc_cfg.mode;
-    const int              cq_level             = encode_context_ptr->rc_cfg.cq_level;
-    int                    active_best_quality  = 0;
-    int                    active_worst_quality = rc->active_worst_quality;
-    int                    q;
-    int is_intrl_arf_boost = gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index] ==
-        INTNL_ARF_UPDATE;
-
-    if (frame_is_intra_only(pcs_ptr->parent_pcs_ptr)) {
+    SequenceControlSet *scs_ptr              = pcs_ptr->parent_pcs_ptr->scs_ptr;
+    EncodeContext      *encode_context_ptr   = scs_ptr->encode_context_ptr;
+    RATE_CONTROL       *rc                   = &encode_context_ptr->rc;
+    int                 active_best_quality  = 0;
+    int                 active_worst_quality = rc->active_worst_quality;
+    int                 q;
+    int is_intrl_arf_boost = pcs_ptr->parent_pcs_ptr->update_type == INTNL_ARF_UPDATE;
+    // Calculated qindex based on r0 using qstep calculation
+    if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.qstep_based_q_calc &&
+        pcs_ptr->parent_pcs_ptr->temporal_layer_index == 0) {
+        const double weight = r0_weight[0 /* VBR */][frame_is_intra_only(pcs_ptr->parent_pcs_ptr)];
+        const double qstep_ratio             = sqrt(pcs_ptr->parent_pcs_ptr->r0) * weight;
+        int          qindex_from_qstep_ratio = svt_av1_get_q_index_from_qstep_ratio(
+            rc->active_worst_quality, qstep_ratio, scs_ptr->static_config.encoder_bit_depth);
+        if (pcs_ptr->parent_pcs_ptr->sc_class1 && scs_ptr->passes == 1 &&
+            encode_context_ptr->rc_cfg.mode == AOM_VBR &&
+            frame_is_intra_only(pcs_ptr->parent_pcs_ptr))
+            qindex_from_qstep_ratio /= 2;
+        if (!frame_is_intra_only(pcs_ptr->parent_pcs_ptr))
+            rc->arf_q = qindex_from_qstep_ratio;
+        active_best_quality = clamp(
+            qindex_from_qstep_ratio, rc->best_quality, rc->active_worst_quality);
+        active_worst_quality = (active_best_quality + (3 * active_worst_quality) + 2) / 4;
+    } else if (frame_is_intra_only(pcs_ptr->parent_pcs_ptr)) {
         const int is_fwd_kf = pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type == KEY_FRAME &&
             pcs_ptr->parent_pcs_ptr->frm_hdr.show_frame == 0;
-        get_intra_q_and_bounds(
-            pcs_ptr, &active_best_quality, &active_worst_quality, cq_level, is_fwd_kf);
+        get_intra_q_and_bounds(pcs_ptr, &active_best_quality, &active_worst_quality, is_fwd_kf);
     } else {
-        const int pyramid_level = gf_group->layer_depth[pcs_ptr->parent_pcs_ptr->gf_group_index];
-        if ((pyramid_level <= 1) || (pyramid_level > MAX_ARF_LAYERS) || rc_mode == AOM_Q) {
-            active_best_quality = get_active_best_quality(pcs_ptr, active_worst_quality, cq_level);
+        const int pyramid_level = pcs_ptr->parent_pcs_ptr->layer_depth;
+        if ((pyramid_level <= 1) || (pyramid_level > MAX_ARF_LAYERS)) {
+            active_best_quality = get_active_best_quality(pcs_ptr, active_worst_quality);
         } else {
             active_best_quality = rc->active_best_quality[pyramid_level - 1] + 1;
-            active_best_quality = AOMMIN(active_best_quality, active_worst_quality);
-            active_best_quality += (active_worst_quality - active_best_quality) / 2;
+            int w1              = non_base_qindex_weight_ref[scs_ptr->max_heirachical_level];
+            int w2              = non_base_qindex_weight_wq[scs_ptr->max_heirachical_level];
+            active_best_quality = (w1 * active_best_quality + (w2 * active_worst_quality) +
+                                   ((w1 + w2) / 2)) /
+                (w1 + w2);
         }
         // For alt_ref and GF frames (including internal arf frames) adjust the
         // worst allowed quality as well. This insures that even on hard
         // sections we dont clamp the Q at the same value for arf frames and
         // leaf (non arf) frames. This is important to the TPL model which assumes
         // Q drops with each arf level.
-        if (!(rc->is_src_frame_alt_ref) &&
-            (refresh_frame_flags->golden_frame || refresh_frame_flags->alt_ref_frame ||
-             is_intrl_arf_boost)) {
+        if (!(pcs_ptr->parent_pcs_ptr->is_overlay) &&
+            (pcs_ptr->parent_pcs_ptr->update_type == GF_UPDATE ||
+             pcs_ptr->parent_pcs_ptr->update_type == ARF_UPDATE || is_intrl_arf_boost)) {
             active_worst_quality = (active_best_quality + (3 * active_worst_quality) + 2) / 4;
         }
     }
-
     adjust_active_best_and_worst_quality_org(
         pcs_ptr, rc, &active_worst_quality, &active_best_quality);
 
@@ -1949,15 +2151,14 @@ static int rc_pick_q_and_bounds(PictureControlSet *pcs_ptr) {
            pcs_ptr->parent_pcs_ptr->bottom_index >= rc->best_quality);
 
     assert(q <= rc->worst_quality && q >= rc->best_quality);
-
-    if (gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index] == ARF_UPDATE)
+    if (pcs_ptr->parent_pcs_ptr->update_type == ARF_UPDATE)
         rc->arf_q = q;
 
     return q;
 }
 
 static int av1_estimate_bits_at_q(FrameType frame_type, int q, int mbs, double correction_factor,
-                                  AomBitDepth bit_depth, uint8_t sc_content_detected,
+                                  EbBitDepth bit_depth, uint8_t sc_content_detected,
                                   int onepass_cbr_mode) {
     const int bpm = (int)(svt_av1_rc_bits_per_mb(
         frame_type, q, correction_factor, bit_depth, sc_content_detected, onepass_cbr_mode));
@@ -1970,7 +2171,7 @@ static void av1_rc_update_rate_correction_factors(PictureParentControlSet *ppcs_
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
     int                 correction_factor  = 100;
-    double rate_correction_factor = get_rate_correction_factor(ppcs_ptr /*, width, height*/);
+    double rate_correction_factor          = get_rate_correction_factor(ppcs_ptr, width, height);
     double adjustment_limit;
     //const int MBs = av1_get_MBs(width, height);
     const int MBs = ((width + 15) / 16) * ((height + 15) / 16); //av1_get_MBs(width, height);
@@ -1978,7 +2179,7 @@ static void av1_rc_update_rate_correction_factors(PictureParentControlSet *ppcs_
     int projected_size_based_on_q = 0;
 
     // Do not update the rate factors for arf overlay frames.
-    if (rc->is_src_frame_alt_ref)
+    if (ppcs_ptr->is_overlay)
         return;
 
     // Clear down mmx registers to allow floating point in what follows
@@ -2039,7 +2240,7 @@ static void av1_rc_update_rate_correction_factors(PictureParentControlSet *ppcs_
             rate_correction_factor = MIN_BPB_FACTOR;
     }
 
-    set_rate_correction_factor(ppcs_ptr, rate_correction_factor /*, width, height*/);
+    set_rate_correction_factor(ppcs_ptr, rate_correction_factor, width, height);
 }
 
 // Update the buffer level: leaky bucket model.
@@ -2057,48 +2258,63 @@ static void update_buffer_level(PictureParentControlSet *ppcs_ptr, int encoded_f
     // Clip the buffer level to the maximum specified buffer size.
     rc->bits_off_target = AOMMIN(rc->bits_off_target, rc->maximum_buffer_size);
     rc->buffer_level    = rc->bits_off_target;
-
-    //if (cpi->use_svc) update_layer_buffer_level(&cpi->svc, encoded_frame_size);
+}
+/*********************************************************************************************
+* Reset rate_control_param into default values
+***********************************************************************************************/
+static void rc_param_reset(struct RateControlIntervalParamContext *rc_param) {
+    rc_param->size                     = -1;
+    rc_param->processed_frame_number   = 0;
+    rc_param->vbr_bits_off_target      = 0;
+    rc_param->vbr_bits_off_target_fast = 0;
+    rc_param->rate_error_estimate      = 0;
+    rc_param->total_actual_bits        = 0;
+    rc_param->total_target_bits        = 0;
+    rc_param->extend_minq              = 0;
+    rc_param->extend_maxq              = 0;
+    rc_param->extend_minq_fast         = 0;
 }
 
-static void av1_rc_postencode_update(PictureParentControlSet *ppcs_ptr) {
-    const RefreshFrameFlagsInfo *const refresh_frame_flags = &ppcs_ptr->refresh_frame;
-    SequenceControlSet                *scs_ptr             = ppcs_ptr->scs_ptr;
-    EncodeContext                     *encode_context_ptr  = scs_ptr->encode_context_ptr;
-    RATE_CONTROL                      *rc                  = &encode_context_ptr->rc;
-    GF_GROUP *const                    gf_group            = &encode_context_ptr->gf_group;
-    CurrentFrame *const                current_frame       = &ppcs_ptr->av1_cm->current_frame;
-    current_frame->frame_type                              = ppcs_ptr->frm_hdr.frame_type;
-    FrameHeader *frm_hdr                                   = &ppcs_ptr->frm_hdr;
-    const int    width                                     = ppcs_ptr->av1_cm->frm_size.frame_width;
-    const int    height = ppcs_ptr->av1_cm->frm_size.frame_height;
+/*********************************************************************************************
+* Update the internal RC and TWO_PASS struct stats based on the received feedback
+***********************************************************************************************/
+static void av1_rc_postencode_update_gop_const(PictureParentControlSet *ppcs) {
+    SequenceControlSet              *scs           = ppcs->scs_ptr;
+    EncodeContext                   *enc_cont      = scs->encode_context_ptr;
+    RATE_CONTROL                    *rc            = &enc_cont->rc;
+    FrameHeader                     *frm_hdr       = &ppcs->frm_hdr;
+    RateControlIntervalParamContext *rc_param_ptr  = ppcs->rate_control_param_ptr;
+    const int                        width         = ppcs->av1_cm->frm_size.frame_width;
+    const int                        height        = ppcs->av1_cm->frm_size.frame_height;
+    const int                        is_intrnl_arf = ppcs->update_type == INTNL_ARF_UPDATE;
 
-    const int is_intrnl_arf = gf_group->update_type[ppcs_ptr->gf_group_index] == INTNL_ARF_UPDATE;
-
-    const int qindex = frm_hdr->quantization_params.base_q_idx; //cm->quant_params.base_qindex;
+    const int qindex = frm_hdr->quantization_params.base_q_idx;
 
     // Update rate control heuristics
-    ppcs_ptr->projected_frame_size = (int)ppcs_ptr->total_num_bits;
+    ppcs->projected_frame_size = (int)ppcs->total_num_bits;
     // Post encode loop adjustment of Q prediction.
-    av1_rc_update_rate_correction_factors(ppcs_ptr, width, height);
+    av1_rc_update_rate_correction_factors(ppcs, width, height);
 
     // Keep a record of last Q and ambient average Q.
-    if (current_frame->frame_type == KEY_FRAME) {
+    if (frm_hdr->frame_type == KEY_FRAME) {
         rc->avg_frame_qindex[KEY_FRAME] = ROUND_POWER_OF_TWO(
             3 * rc->avg_frame_qindex[KEY_FRAME] + qindex, 2);
-        svt_block_on_mutex(encode_context_ptr->frame_updated_mutex);
-        encode_context_ptr->frame_updated = 0;
-        svt_release_mutex(encode_context_ptr->frame_updated_mutex);
+        rc->last_q[KEY_FRAME] = (int32_t)svt_av1_convert_qindex_to_q(qindex,
+                                                                     scs->encoder_bit_depth);
+        svt_block_on_mutex(enc_cont->frame_updated_mutex);
+        enc_cont->frame_updated = 0;
+        svt_release_mutex(enc_cont->frame_updated_mutex);
     } else {
-        svt_block_on_mutex(encode_context_ptr->frame_updated_mutex);
-        encode_context_ptr->frame_updated++;
-        svt_release_mutex(encode_context_ptr->frame_updated_mutex);
-        if (/*(cpi->use_svc && cpi->oxcf.rc_cfg.mode == AOM_CBR) ||*/
-            (!rc->is_src_frame_alt_ref &&
-             !(refresh_frame_flags->golden_frame || is_intrnl_arf ||
-               refresh_frame_flags->alt_ref_frame))) {
+        svt_block_on_mutex(enc_cont->frame_updated_mutex);
+        enc_cont->frame_updated++;
+        svt_release_mutex(enc_cont->frame_updated_mutex);
+        if ((!ppcs->is_overlay &&
+             !(ppcs->update_type == GF_UPDATE || ppcs->update_type == ARF_UPDATE ||
+               is_intrnl_arf))) {
             rc->avg_frame_qindex[INTER_FRAME] = ROUND_POWER_OF_TWO(
                 3 * rc->avg_frame_qindex[INTER_FRAME] + qindex, 2);
+            rc->last_q[INTER_FRAME] = (int32_t)svt_av1_convert_qindex_to_q(qindex,
+                                                                           scs->encoder_bit_depth);
         }
     }
 
@@ -2107,10 +2323,79 @@ static void av1_rc_postencode_update(PictureParentControlSet *ppcs_ptr) {
     // If all mbs in this group are skipped only update if the Q value is
     // better than that already stored.
     // This is used to help set quality in forced key frames to reduce popping
-    if ((qindex < rc->last_boosted_qindex) || (current_frame->frame_type == KEY_FRAME) ||
+    if ((qindex < rc->last_boosted_qindex) || (frm_hdr->frame_type == KEY_FRAME) ||
         (!rc->constrained_gf_group &&
-         (refresh_frame_flags->alt_ref_frame || is_intrnl_arf ||
-          (refresh_frame_flags->golden_frame && !rc->is_src_frame_alt_ref)))) {
+         (ppcs->update_type == ARF_UPDATE || is_intrnl_arf ||
+          (ppcs->update_type == GF_UPDATE && !ppcs->is_overlay)))) {
+        rc->last_boosted_qindex = qindex;
+    }
+    update_buffer_level(ppcs, ppcs->projected_frame_size);
+    rc->prev_avg_frame_bandwidth = rc->avg_frame_bandwidth;
+
+    // Rolling monitors of whether we are over or underspending used to help
+    // regulate min and Max Q in two pass.
+    if (frm_hdr->frame_type != KEY_FRAME) {
+        rc_param_ptr->rolling_target_bits = (int)ROUND_POWER_OF_TWO_64(
+            rc_param_ptr->rolling_target_bits * 3 + ppcs->this_frame_target, 2);
+        rc_param_ptr->rolling_actual_bits = (int)ROUND_POWER_OF_TWO_64(
+            rc_param_ptr->rolling_actual_bits * 3 + ppcs->projected_frame_size, 2);
+    }
+
+    // Actual bits spent
+    rc_param_ptr->total_actual_bits += ppcs->projected_frame_size;
+    rc_param_ptr->total_target_bits += ppcs->frm_hdr.showable_frame ? rc->avg_frame_bandwidth : 0;
+
+    if (frm_hdr->frame_type == KEY_FRAME)
+        rc->frames_since_key = 0;
+}
+static void av1_rc_postencode_update(PictureParentControlSet *ppcs_ptr) {
+    SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
+    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
+    RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
+    FrameHeader        *frm_hdr            = &ppcs_ptr->frm_hdr;
+    const int           width              = ppcs_ptr->av1_cm->frm_size.frame_width;
+    const int           height             = ppcs_ptr->av1_cm->frm_size.frame_height;
+    const int           is_intrnl_arf      = ppcs_ptr->update_type == INTNL_ARF_UPDATE;
+
+    const int qindex = frm_hdr->quantization_params.base_q_idx;
+
+    // Update rate control heuristics
+    ppcs_ptr->projected_frame_size = (int)ppcs_ptr->total_num_bits;
+    // Post encode loop adjustment of Q prediction.
+    av1_rc_update_rate_correction_factors(ppcs_ptr, width, height);
+
+    // Keep a record of last Q and ambient average Q.
+    if (frm_hdr->frame_type == KEY_FRAME) {
+        rc->avg_frame_qindex[KEY_FRAME] = ROUND_POWER_OF_TWO(
+            3 * rc->avg_frame_qindex[KEY_FRAME] + qindex, 2);
+        rc->last_q[KEY_FRAME] = (int32_t)svt_av1_convert_qindex_to_q(qindex,
+                                                                     scs_ptr->encoder_bit_depth);
+        svt_block_on_mutex(encode_context_ptr->frame_updated_mutex);
+        encode_context_ptr->frame_updated = 0;
+        svt_release_mutex(encode_context_ptr->frame_updated_mutex);
+    } else {
+        svt_block_on_mutex(encode_context_ptr->frame_updated_mutex);
+        encode_context_ptr->frame_updated++;
+        svt_release_mutex(encode_context_ptr->frame_updated_mutex);
+        if ((!ppcs_ptr->is_overlay &&
+             !(ppcs_ptr->update_type == GF_UPDATE || ppcs_ptr->update_type == ARF_UPDATE ||
+               is_intrnl_arf))) {
+            rc->avg_frame_qindex[INTER_FRAME] = ROUND_POWER_OF_TWO(
+                3 * rc->avg_frame_qindex[INTER_FRAME] + qindex, 2);
+            rc->last_q[INTER_FRAME] = (int32_t)svt_av1_convert_qindex_to_q(
+                qindex, scs_ptr->encoder_bit_depth);
+        }
+    }
+
+    // Keep record of last boosted (KF/GF/ARF) Q value.
+    // If the current frame is coded at a lower Q then we also update it.
+    // If all mbs in this group are skipped only update if the Q value is
+    // better than that already stored.
+    // This is used to help set quality in forced key frames to reduce popping
+    if ((qindex < rc->last_boosted_qindex) || (frm_hdr->frame_type == KEY_FRAME) ||
+        (!rc->constrained_gf_group &&
+         (ppcs_ptr->update_type == ARF_UPDATE || is_intrnl_arf ||
+          (ppcs_ptr->update_type == GF_UPDATE && !ppcs_ptr->is_overlay)))) {
         rc->last_boosted_qindex = qindex;
     }
     update_buffer_level(ppcs_ptr, ppcs_ptr->projected_frame_size);
@@ -2118,7 +2403,7 @@ static void av1_rc_postencode_update(PictureParentControlSet *ppcs_ptr) {
 
     // Rolling monitors of whether we are over or underspending used to help
     // regulate min and Max Q in two pass.
-    if (current_frame->frame_type != KEY_FRAME) {
+    if (frm_hdr->frame_type != KEY_FRAME) {
         rc->rolling_target_bits = (int)ROUND_POWER_OF_TWO_64(
             rc->rolling_target_bits * 3 + ppcs_ptr->this_frame_target, 2);
         rc->rolling_actual_bits = (int)ROUND_POWER_OF_TWO_64(
@@ -2129,31 +2414,20 @@ static void av1_rc_postencode_update(PictureParentControlSet *ppcs_ptr) {
     rc->total_actual_bits += ppcs_ptr->projected_frame_size;
     rc->total_target_bits += ppcs_ptr->frm_hdr.showable_frame ? rc->avg_frame_bandwidth : 0;
 
-    rc->total_target_vs_actual = rc->total_actual_bits - rc->total_target_bits;
-
-    if (current_frame->frame_type == KEY_FRAME)
+    if (frm_hdr->frame_type == KEY_FRAME)
         rc->frames_since_key = 0;
 }
 void update_rc_counts(PictureParentControlSet *ppcs_ptr) {
     SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
-    GF_GROUP *const     gf_group           = &encode_context_ptr->gf_group;
-
     if (ppcs_ptr->frm_hdr.showable_frame) {
         // If this is a show_existing_frame with a source other than altref,
         // or if it is not a displayed forward keyframe, the keyframe update
         // counters were incremented when it was originally encoded.
         rc->frames_since_key++;
         rc->frames_to_key--;
-        rc->frames_till_gf_update_due--;
     }
-    //update_gf_group_index(cpi);
-    // Increment the gf group index ready for the next frame. If this is
-    // a show_existing_frame with a source other than altref, or if it is not
-    // a displayed forward keyframe, the index was incremented when it was
-    // originally encoded.
-    ++gf_group->index;
 }
 #define VBR_PCT_ADJUSTMENT_LIMIT 50
 // For VBR...adjustment to the frame target based on error from previous frames
@@ -2180,7 +2454,7 @@ static void vbr_rate_correction(PictureControlSet *pcs_ptr, int *this_frame_targ
 
     // Fast redistribution of bits arising from massive local undershoot.
     // Dont do it for kf,arf,gf or overlay frames.
-    if (!frame_is_kf_gf_arf(pcs_ptr->parent_pcs_ptr) && !rc->is_src_frame_alt_ref &&
+    if (!frame_is_kf_gf_arf(pcs_ptr->parent_pcs_ptr) && !pcs_ptr->parent_pcs_ptr->is_overlay &&
         rc->vbr_bits_off_target_fast) {
         int one_frame_bits = AOMMAX(rc->avg_frame_bandwidth, *this_frame_target);
         int fast_extra_bits;
@@ -2192,62 +2466,13 @@ static void vbr_rate_correction(PictureControlSet *pcs_ptr, int *this_frame_targ
     }
 }
 
-static INLINE void set_refresh_frame_flags(RefreshFrameFlagsInfo *const refresh_frame_flags,
-                                           bool refresh_gf, bool refresh_bwdref, bool refresh_arf) {
-    refresh_frame_flags->golden_frame  = refresh_gf;
-    refresh_frame_flags->bwd_ref_frame = refresh_bwdref;
-    refresh_frame_flags->alt_ref_frame = refresh_arf;
-}
-
-static void av1_configure_buffer_updates(PictureControlSet           *pcs_ptr,
-                                         RefreshFrameFlagsInfo *const refresh_frame_flags,
-                                         int                          force_refresh_all) {
-    // NOTE(weitinglin): Should we define another function to take care of
-    // cpi->rc.is_$Source_Type to make this function as it is in the comment?
-    SequenceControlSet     *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
-    EncodeContext          *encode_context_ptr = scs_ptr->encode_context_ptr;
-    RATE_CONTROL           *rc                 = &encode_context_ptr->rc;
-    GF_GROUP               *gf_group           = &encode_context_ptr->gf_group;
-    const FRAME_UPDATE_TYPE type = gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index];
-    rc->is_src_frame_alt_ref     = 0;
-
-    switch (type) {
-    case KF_UPDATE: set_refresh_frame_flags(refresh_frame_flags, true, true, true); break;
-
-    case LF_UPDATE: set_refresh_frame_flags(refresh_frame_flags, false, false, false); break;
-
-    case GF_UPDATE: set_refresh_frame_flags(refresh_frame_flags, true, false, false); break;
-
-    case OVERLAY_UPDATE:
-        set_refresh_frame_flags(refresh_frame_flags, true, false, false);
-        rc->is_src_frame_alt_ref = 1;
-        break;
-
-    case ARF_UPDATE:
-        // NOTE: BWDREF does not get updated along with ALTREF_FRAME.
-        set_refresh_frame_flags(refresh_frame_flags, false, false, true);
-        break;
-
-    case INTNL_OVERLAY_UPDATE:
-        set_refresh_frame_flags(refresh_frame_flags, false, false, false);
-        rc->is_src_frame_alt_ref = 1;
-        break;
-
-    case INTNL_ARF_UPDATE: set_refresh_frame_flags(refresh_frame_flags, false, true, false); break;
-
-    default: assert(0); break;
-    }
-
-    if (force_refresh_all)
-        set_refresh_frame_flags(refresh_frame_flags, true, true, true);
-}
 static void av1_set_target_rate(PictureControlSet *pcs_ptr) {
     SequenceControlSet         *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
     EncodeContext              *encode_context_ptr = scs_ptr->encode_context_ptr;
     int                         target_rate        = pcs_ptr->parent_pcs_ptr->base_frame_target;
     const RateControlCfg *const rc_cfg             = &encode_context_ptr->rc_cfg;
     // Correction to rate target based on prior over or under shoot.
-    if (rc_cfg->mode == AOM_VBR || rc_cfg->mode == AOM_CQ)
+    if (rc_cfg->mode == AOM_VBR)
         vbr_rate_correction(pcs_ptr, &target_rate);
     pcs_ptr->parent_pcs_ptr->this_frame_target = target_rate;
 }
@@ -2270,7 +2495,7 @@ static double av1_get_compression_ratio(PictureParentControlSet *ppcs_ptr,
 * reverse of get_kf_active_quality_tpl()
 **************************************************************************************************************/
 static int get_kf_q_tpl(const RATE_CONTROL *const rc, int target_active_quality,
-                        AomBitDepth bit_depth) {
+                        EbBitDepth bit_depth) {
     int *kf_low_motion_minq_cqp;
     int *kf_high_motion_minq;
     ASSIGN_MINQ_TABLE(bit_depth, kf_low_motion_minq_cqp);
@@ -2294,7 +2519,7 @@ static int get_kf_q_tpl(const RATE_CONTROL *const rc, int target_active_quality,
 *This function finds the q for a selected active quality for base layer frames. The functionality is the reverse of get_kf_active_quality_tpl()
 **************************************************************************************************************/
 static int get_gfu_q_tpl(const RATE_CONTROL *const rc, int target_active_quality,
-                         AomBitDepth bit_depth) {
+                         EbBitDepth bit_depth) {
     int *arfgf_low_motion_minq;
     int *arfgf_high_motion_minq;
     ASSIGN_MINQ_TABLE(bit_depth, arfgf_low_motion_minq);
@@ -2333,10 +2558,6 @@ static void capped_crf_reencode(PictureParentControlSet *ppcs_ptr, int *const q)
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL *const rc                 = &encode_context_ptr->rc;
 
-    if (ppcs_ptr->temporal_layer_index == 0 && ppcs_ptr->slice_type != 2) {
-        ppcs_ptr->gf_group_index                                                    = 1;
-        scs_ptr->encode_context_ptr->gf_group.update_type[ppcs_ptr->gf_group_index] = 6;
-    }
     uint32_t frame_rate   = ((scs_ptr->frame_rate + (1 << (RC_PRECISION - 1))) >> RC_PRECISION);
     int      frames_in_sw = (int)rc->rate_average_periodin_frames;
 
@@ -2456,11 +2677,10 @@ static void av1_rc_compute_frame_size_bounds(PictureParentControlSet *ppcs_ptr, 
 // back and recode a frame.
 static AOM_INLINE int recode_loop_test(PictureParentControlSet *ppcs_ptr, int high_limit,
                                        int low_limit, int q, int maxq, int minq) {
-    EncodeContext *const        encode_context_ptr = ppcs_ptr->scs_ptr->encode_context_ptr;
-    RATE_CONTROL *const         rc                 = &(encode_context_ptr->rc);
-    const RateControlCfg *const rc_cfg             = &encode_context_ptr->rc_cfg;
-    const int                   frame_is_kfgfarf   = frame_is_kf_gf_arf(ppcs_ptr);
-    int                         force_recode       = 0;
+    EncodeContext *const encode_context_ptr = ppcs_ptr->scs_ptr->encode_context_ptr;
+    RATE_CONTROL *const  rc                 = &(encode_context_ptr->rc);
+    const int            frame_is_kfgfarf   = frame_is_kf_gf_arf(ppcs_ptr);
+    int                  force_recode       = 0;
     if ((ppcs_ptr->projected_frame_size >= rc->max_frame_bandwidth) ||
         (encode_context_ptr->recode_loop == ALLOW_RECODE) ||
         (frame_is_kfgfarf && (encode_context_ptr->recode_loop >= ALLOW_RECODE_KFMAXBW))) {
@@ -2468,13 +2688,6 @@ static AOM_INLINE int recode_loop_test(PictureParentControlSet *ppcs_ptr, int hi
         if ((ppcs_ptr->projected_frame_size > high_limit && q < maxq) ||
             (ppcs_ptr->projected_frame_size < low_limit && q > minq)) {
             force_recode = 1;
-        } else if (rc_cfg->mode == AOM_CQ) {
-            // Deal with frame undershoot and whether or not we are
-            // below the automatically set cq level.
-            if (q > rc_cfg->cq_level &&
-                ppcs_ptr->projected_frame_size < ((ppcs_ptr->this_frame_target * 7) >> 3)) {
-                force_recode = 1;
-            }
         }
     }
     return force_recode;
@@ -2552,9 +2765,6 @@ void recode_loop_update_q(PictureParentControlSet *ppcs_ptr, int *const loop, in
         svt_release_mutex(ppcs_ptr->pcs_total_rate_mutex);
     } else {
         ppcs_ptr->projected_frame_size = 0;
-    }
-    if (ppcs_ptr->loop_count && rc_cfg->mode != AOM_Q) {
-        // scale rc->projected_frame_size with *0.8 for loop_count>=1
     }
     *loop = 0;
     if (scs_ptr->encode_context_ptr->recode_loop == ALLOW_RECODE_KFMAXBW &&
@@ -2658,24 +2868,8 @@ void recode_loop_update_q(PictureParentControlSet *ppcs_ptr, int *const loop, in
                 // Get 'q' in-between 'q_mid' and 'q_regulated' for a smooth
                 // transition between loop_count < 2 and loop_count > 2.
                 *q = (q_mid + q_regulated) / 2;
-
-                // Special case reset for qlow for constrained quality.
-                // This should only trigger where there is very substantial
-                // undershoot on a frame and the auto cq level is above
-                // the user passsed in value.
-                if (rc_cfg->mode == AOM_CQ && q_regulated < *q_low) {
-                    *q_low = *q;
-                }
             } else {
                 *q = get_regulated_q_undershoot(ppcs_ptr, *q_high, top_index, bottom_index);
-
-                // Special case reset for qlow for constrained quality.
-                // This should only trigger where there is very substantial
-                // undershoot on a frame and the auto cq level is above
-                // the user passsed in value.
-                if (rc_cfg->mode == AOM_CQ && *q < *q_low) {
-                    *q_low = *q;
-                }
             }
 
             *undershoot_seen = 1;
@@ -2712,7 +2906,7 @@ static void restore_two_pass_param(PictureParentControlSet         *ppcs_ptr,
                                    RateControlIntervalParamContext *rate_control_param_ptr) {
     SequenceControlSet *scs_ptr = ppcs_ptr->scs_ptr;
     TWO_PASS *const     twopass = &scs_ptr->twopass;
-    if (ppcs_ptr->scs_ptr->enable_dec_order == 1 && ppcs_ptr->scs_ptr->lap_enabled &&
+    if (ppcs_ptr->scs_ptr->enable_dec_order == 1 && ppcs_ptr->scs_ptr->lap_rc &&
         ppcs_ptr->temporal_layer_index == 0) {
         for (uint64_t num_frames = ppcs_ptr->stats_in_offset;
              num_frames < ppcs_ptr->stats_in_end_offset;
@@ -2728,144 +2922,93 @@ static void restore_two_pass_param(PictureParentControlSet         *ppcs_ptr,
             }
         }
     }
+
     twopass->stats_in = scs_ptr->twopass.stats_buf_ctx->stats_in_start + ppcs_ptr->stats_in_offset;
     twopass->stats_buf_ctx->stats_in_end = scs_ptr->twopass.stats_buf_ctx->stats_in_start +
         ppcs_ptr->stats_in_end_offset;
     twopass->kf_group_bits       = rate_control_param_ptr->kf_group_bits;
     twopass->kf_group_error_left = rate_control_param_ptr->kf_group_error_left;
+    if (scs_ptr->static_config.gop_constraint_rc) {
+        twopass->extend_minq         = rate_control_param_ptr->extend_minq;
+        twopass->extend_maxq         = rate_control_param_ptr->extend_maxq;
+        twopass->extend_minq_fast    = rate_control_param_ptr->extend_minq_fast;
+        RATE_CONTROL *rc             = &scs_ptr->encode_context_ptr->rc;
+        rc->vbr_bits_off_target      = rate_control_param_ptr->vbr_bits_off_target;
+        rc->vbr_bits_off_target_fast = rate_control_param_ptr->vbr_bits_off_target_fast;
+        rc->rolling_target_bits      = rate_control_param_ptr->rolling_target_bits;
+        rc->rolling_actual_bits      = rate_control_param_ptr->rolling_actual_bits;
+        rc->rate_error_estimate      = rate_control_param_ptr->rate_error_estimate;
+        rc->total_actual_bits        = rate_control_param_ptr->total_actual_bits;
+        rc->total_target_bits        = rate_control_param_ptr->total_target_bits;
+    }
 }
-/************************************************************************************************
-* Populate the required parameters in gf_group structure from other structures
-*************************************************************************************************/
-static void restore_gf_group_param(PictureParentControlSet *ppcs_ptr) {
-    SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
-    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
-    GF_GROUP *const     gf_group           = &encode_context_ptr->gf_group;
-    gf_group->index                        = ppcs_ptr->gf_group_index;
-    gf_group->size                         = ppcs_ptr->gf_group_size;
-    gf_group->update_type[gf_group->index] = ppcs_ptr->update_type;
-    gf_group->layer_depth[gf_group->index] = ppcs_ptr->layer_depth;
-    gf_group->arf_boost[gf_group->index]   = ppcs_ptr->arf_boost;
-}
+
 /************************************************************************************************
 * Populate the required parameters in rc, twopass and gf_group structures from other structures
 *************************************************************************************************/
-static void restore_param(PictureParentControlSet         *ppcs_ptr,
+static void restore_param(PictureParentControlSet         *ppcs,
                           RateControlIntervalParamContext *rate_control_param_ptr) {
-    SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
-    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
-    if (!(!(scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-            scs_ptr->static_config.pass == ENC_LAST_PASS) &&
-          scs_ptr->static_config.pass != ENC_FIRST_PASS &&
-          scs_ptr->static_config.rate_control_mode == 2))
-        restore_two_pass_param(ppcs_ptr, rate_control_param_ptr);
+    SequenceControlSet *scs    = ppcs->scs_ptr;
+    EncodeContext      *ec_ctx = scs->encode_context_ptr;
 
-    const KeyFrameCfg *const kf_cfg = &encode_context_ptr->kf_cfg;
-    ppcs_ptr->frames_since_key      = (int)(ppcs_ptr->decode_order - ppcs_ptr->last_idr_picture);
-    int key_max                     = kf_cfg->key_freq_max;
-    if (scs_ptr->lap_enabled) {
-        if (scs_ptr->static_config.hierarchical_levels != ppcs_ptr->hierarchical_levels ||
-            ppcs_ptr->end_of_sequence_region)
-            key_max = (int)MIN(
-                kf_cfg->key_freq_max,
-                (int)((int64_t)((scs_ptr->twopass.stats_buf_ctx->stats_in_end - 1)->frame) -
-                      ppcs_ptr->last_idr_picture + 1));
-        else
-            key_max = kf_cfg->key_freq_max;
-    } else {
-        if (!(!(scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-                scs_ptr->static_config.pass == ENC_LAST_PASS) &&
-              scs_ptr->static_config.pass != ENC_FIRST_PASS &&
-              scs_ptr->static_config.rate_control_mode == 2))
-            key_max = (int)MIN(
-                kf_cfg->key_freq_max,
-                (int)((int64_t)((scs_ptr->twopass.stats_buf_ctx->stats_in_end - 1)->frame) -
-                      ppcs_ptr->last_idr_picture + 1));
+    if (scs->static_config.gop_constraint_rc &&
+        rate_control_param_ptr->first_poc == ppcs->picture_number) {
+        rate_control_param_ptr->rolling_target_bits = ec_ctx->rc.avg_frame_bandwidth;
+        rate_control_param_ptr->rolling_actual_bits = ec_ctx->rc.avg_frame_bandwidth;
     }
-    if (!(!(scs_ptr->static_config.pass == ENC_MIDDLE_PASS ||
-            scs_ptr->static_config.pass == ENC_LAST_PASS) &&
-          scs_ptr->static_config.pass != ENC_FIRST_PASS &&
-          scs_ptr->static_config.rate_control_mode == 2)) {
-        ppcs_ptr->frames_to_key = key_max - ppcs_ptr->frames_since_key;
-        TWO_PASS *const twopass = &scs_ptr->twopass;
-        RATE_CONTROL   *rc      = &encode_context_ptr->rc;
+    if (scs->static_config.rate_control_mode != SVT_AV1_RC_MODE_CBR)
+        restore_two_pass_param(ppcs, rate_control_param_ptr);
+
+    ppcs->frames_since_key = (int)(ppcs->decode_order - ppcs->last_idr_picture);
+
+    int key_max = scs->static_config.intra_period_length + 1;
+    if (scs->lap_rc) {
+        if (scs->static_config.hierarchical_levels != ppcs->hierarchical_levels ||
+            ppcs->end_of_sequence_region)
+            key_max = (int)MIN(
+                (scs->static_config.intra_period_length + 1),
+                (int)((int64_t)((scs->twopass.stats_buf_ctx->stats_in_end - 1)->frame) -
+                      ppcs->last_idr_picture + 1));
+        else
+            key_max = scs->static_config.intra_period_length + 1;
+    } else {
+        if (scs->static_config.rate_control_mode != SVT_AV1_RC_MODE_CBR)
+            key_max = (int)MIN(
+                scs->static_config.intra_period_length + 1,
+                (int)((int64_t)((scs->twopass.stats_buf_ctx->stats_in_end - 1)->frame) -
+                      ppcs->last_idr_picture + 1));
+    }
+    if (scs->static_config.rate_control_mode != SVT_AV1_RC_MODE_CBR) {
+        ppcs->frames_to_key     = key_max - ppcs->frames_since_key;
+        TWO_PASS *const twopass = &scs->twopass;
+        RATE_CONTROL   *rc      = &ec_ctx->rc;
         // For the last minigop of the sequence, when look ahead is not long enough to find the GOP size, the GOP size is set
         // to kf_cfg->key_freq_max and the kf_group_bits is calculated based on that. However, when we get closer to the end, the
         // end of sequence will be in the look ahead and frames_to_key is updated. In this case, kf_group_bits is calculated based
         // on the new GOP size
-        if (scs_ptr->lap_enabled && (kf_cfg->key_freq_max != ppcs_ptr->frames_since_key) &&
-            (scs_ptr->lad_mg + 1) * (1 << scs_ptr->static_config.hierarchical_levels) <
-                scs_ptr->static_config.intra_period_length &&
-            (scs_ptr->static_config.hierarchical_levels != ppcs_ptr->hierarchical_levels ||
-             ppcs_ptr->end_of_sequence_region) &&
+        if (scs->lap_rc &&
+            ((scs->static_config.intra_period_length + 1) != ppcs->frames_since_key) &&
+            (scs->lad_mg + 1) * (1 << scs->static_config.hierarchical_levels) <
+                scs->static_config.intra_period_length &&
+            (scs->static_config.hierarchical_levels != ppcs->hierarchical_levels ||
+             ppcs->end_of_sequence_region) &&
             !rate_control_param_ptr->end_of_seq_seen) {
-            twopass->kf_group_bits = (ppcs_ptr->frames_to_key) * twopass->kf_group_bits /
-                (kf_cfg->key_freq_max - ppcs_ptr->frames_since_key);
+            twopass->kf_group_bits = (ppcs->frames_to_key) * twopass->kf_group_bits /
+                (scs->static_config.intra_period_length + 1 - ppcs->frames_since_key);
             rate_control_param_ptr->end_of_seq_seen = 1;
         }
-        rc->frames_to_key    = ppcs_ptr->frames_to_key;
-        rc->frames_since_key = ppcs_ptr->frames_since_key;
+        rc->frames_to_key    = ppcs->frames_to_key;
+        rc->frames_since_key = ppcs->frames_since_key;
     }
-    restore_gf_group_param(ppcs_ptr);
 }
-/************************************************************************************************
-* Store the required parameters from rc structure to other structures
-*************************************************************************************************/
-static void store_rc_param(PictureParentControlSet *ppcs_ptr) {
-    SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
-    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
-    RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
 
-    ppcs_ptr->is_src_frame_alt_ref = ppcs_ptr->is_overlay;
-    if (ppcs_ptr->is_new_gf_group) {
-        for (uint8_t frame_idx = 0; frame_idx < (int32_t)ppcs_ptr->gf_interval; frame_idx++) {
-            ppcs_ptr->gf_group[frame_idx]->num_stats_used_for_gfu_boost =
-                rc->num_stats_used_for_gfu_boost;
-            ppcs_ptr->gf_group[frame_idx]->num_stats_required_for_gfu_boost =
-                rc->num_stats_required_for_gfu_boost;
-        }
-    }
-}
-/************************************************************************************************
-* Store the required parameters in two_pass structure from other structures
-*************************************************************************************************/
-static void store_two_pass_param(PictureParentControlSet         *ppcs_ptr,
-                                 RateControlIntervalParamContext *rate_control_param_ptr) {
-    SequenceControlSet *scs_ptr = ppcs_ptr->scs_ptr;
-    TWO_PASS *const     twopass = &scs_ptr->twopass;
-
-    rate_control_param_ptr->kf_group_bits       = twopass->kf_group_bits;
-    rate_control_param_ptr->kf_group_error_left = twopass->kf_group_error_left;
-}
-/************************************************************************************************
-* Store the required parameters from gf_group structure to other structures
-*************************************************************************************************/
-static void store_gf_group_param(PictureParentControlSet *ppcs_ptr) {
-    SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
-    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
-    GF_GROUP *const     gf_group           = &encode_context_ptr->gf_group;
-    if (ppcs_ptr->is_new_gf_group) {
-        for (uint8_t frame_idx = 0; frame_idx < (int32_t)ppcs_ptr->gf_interval; frame_idx++) {
-            uint8_t gf_group_index = ppcs_ptr->slice_type == I_SLICE ? frame_idx : frame_idx + 1;
-            ppcs_ptr->gf_group[frame_idx]->gf_group_index = gf_group_index;
-            ppcs_ptr->gf_group[frame_idx]->gf_group_size  = MAX(gf_group->size,
-                                                               ppcs_ptr->gf_interval);
-            ppcs_ptr->gf_group[frame_idx]->update_type    = gf_group->update_type[gf_group_index];
-            ppcs_ptr->gf_group[frame_idx]->layer_depth    = gf_group->layer_depth[gf_group_index];
-            ppcs_ptr->gf_group[frame_idx]->arf_boost      = gf_group->arf_boost[gf_group_index];
-            ppcs_ptr->gf_group[frame_idx]->base_frame_target =
-                gf_group->bit_allocation[gf_group_index];
-        }
-    }
-}
 /************************************************************************************************
 * Store the required parameters from rc, twopass and gf_group structures to other structures
 *************************************************************************************************/
 static void store_param(PictureParentControlSet         *ppcs_ptr,
                         RateControlIntervalParamContext *rate_control_param_ptr) {
-    store_rc_param(ppcs_ptr);
-    store_two_pass_param(ppcs_ptr, rate_control_param_ptr);
-    store_gf_group_param(ppcs_ptr);
+    rate_control_param_ptr->kf_group_bits       = ppcs_ptr->scs_ptr->twopass.kf_group_bits;
+    rate_control_param_ptr->kf_group_error_left = ppcs_ptr->scs_ptr->twopass.kf_group_error_left;
 }
 /************************************************************************************************
 * Calculates the stat of coded frames over the averaging period
@@ -2873,12 +3016,11 @@ static void store_param(PictureParentControlSet         *ppcs_ptr,
 static void coded_frames_stat_calc(PictureParentControlSet *ppcs_ptr) {
     int32_t                   queue_entry_index;
     coded_frames_stats_entry *queue_entry_ptr;
-    EbBool                    move_slide_window_flag = EB_TRUE;
-    EbBool                    end_of_sequence_flag   = EB_TRUE;
-
-    SequenceControlSet *scs_ptr = (SequenceControlSet *)ppcs_ptr->scs_wrapper_ptr->object_ptr;
-    EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
-    RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
+    Bool                      move_slide_window_flag = TRUE;
+    Bool                      end_of_sequence_flag   = TRUE;
+    SequenceControlSet       *scs_ptr                = ppcs_ptr->scs_ptr;
+    EncodeContext            *encode_context_ptr     = scs_ptr->encode_context_ptr;
+    RATE_CONTROL             *rc                     = &encode_context_ptr->rc;
     // Determine offset from the Head Ptr
     queue_entry_index =
         (int32_t)(ppcs_ptr->picture_number -
@@ -2894,7 +3036,7 @@ static void coded_frames_stat_calc(PictureParentControlSet *ppcs_ptr) {
     queue_entry_ptr->picture_number         = ppcs_ptr->picture_number;
     queue_entry_ptr->end_of_sequence_flag   = ppcs_ptr->end_of_sequence_flag;
 
-    move_slide_window_flag = EB_TRUE;
+    move_slide_window_flag = TRUE;
     while (move_slide_window_flag) {
         // Check if the sliding window condition is valid
         uint32_t queue_entry_index_temp = rc->coded_frames_stat_queue_head_index;
@@ -2902,7 +3044,7 @@ static void coded_frames_stat_calc(PictureParentControlSet *ppcs_ptr) {
             end_of_sequence_flag =
                 rc->coded_frames_stat_queue[queue_entry_index_temp]->end_of_sequence_flag;
         else
-            end_of_sequence_flag = EB_FALSE;
+            end_of_sequence_flag = FALSE;
         while (move_slide_window_flag && !end_of_sequence_flag &&
                queue_entry_index_temp <
                    rc->coded_frames_stat_queue_head_index + rc->rate_average_periodin_frames) {
@@ -2911,9 +3053,9 @@ static void coded_frames_stat_calc(PictureParentControlSet *ppcs_ptr) {
                 ? queue_entry_index_temp - CODED_FRAMES_STAT_QUEUE_MAX_DEPTH
                 : queue_entry_index_temp;
 
-            move_slide_window_flag = (EbBool)(move_slide_window_flag &&
-                                              (rc->coded_frames_stat_queue[queue_entry_index_temp2]
-                                                   ->frame_total_bit_actual != -1));
+            move_slide_window_flag = (Bool)(move_slide_window_flag &&
+                                            (rc->coded_frames_stat_queue[queue_entry_index_temp2]
+                                                 ->frame_total_bit_actual != -1));
 
             if (rc->coded_frames_stat_queue[queue_entry_index_temp2]->frame_total_bit_actual !=
                 -1) {
@@ -2921,7 +3063,7 @@ static void coded_frames_stat_calc(PictureParentControlSet *ppcs_ptr) {
                 end_of_sequence_flag =
                     rc->coded_frames_stat_queue[queue_entry_index_temp2]->end_of_sequence_flag;
             } else
-                end_of_sequence_flag = EB_FALSE;
+                end_of_sequence_flag = FALSE;
             queue_entry_index_temp++;
         }
 
@@ -2930,7 +3072,7 @@ static void coded_frames_stat_calc(PictureParentControlSet *ppcs_ptr) {
             queue_entry_ptr = (rc->coded_frames_stat_queue[rc->coded_frames_stat_queue_head_index]);
             queue_entry_index_temp = rc->coded_frames_stat_queue_head_index;
             // This is set to false, so the last frame would go inside the loop
-            end_of_sequence_flag        = EB_FALSE;
+            end_of_sequence_flag        = FALSE;
             uint32_t frames_in_sw       = 0;
             rc->total_bit_actual_per_sw = 0;
 
@@ -3009,11 +3151,8 @@ void reset_rc_param(PictureParentControlSet *ppcs) {
 
 void *rate_control_kernel(void *input_ptr) {
     // Context
-    EbThreadContext    *thread_context_ptr = (EbThreadContext *)input_ptr;
-    RateControlContext *context_ptr        = (RateControlContext *)thread_context_ptr->priv;
-
-    RateControlIntervalParamContext *rate_control_param_ptr;
-
+    EbThreadContext         *thread_context_ptr = (EbThreadContext *)input_ptr;
+    RateControlContext      *context_ptr        = (RateControlContext *)thread_context_ptr->priv;
     PictureControlSet       *pcs_ptr;
     PictureParentControlSet *parentpicture_control_set_ptr;
 
@@ -3039,8 +3178,7 @@ void *rate_control_kernel(void *input_ptr) {
 
         rate_control_tasks_ptr = (RateControlTasks *)rate_control_tasks_wrapper_ptr->object_ptr;
         task_type              = rate_control_tasks_ptr->task_type;
-        EbBool is_superres_recode_task = (task_type == RC_INPUT_SUPERRES_RECODE) ? EB_TRUE
-                                                                                 : EB_FALSE;
+        Bool is_superres_recode_task = (task_type == RC_INPUT_SUPERRES_RECODE) ? TRUE : FALSE;
 
         // Modify these for different temporal layers later
         switch (task_type) {
@@ -3050,8 +3188,7 @@ void *rate_control_kernel(void *input_ptr) {
             // intentionally reuse code in RC_INPUT
         case RC_INPUT:
             pcs_ptr = (PictureControlSet *)rate_control_tasks_ptr->pcs_wrapper_ptr->object_ptr;
-
-            scs_ptr              = (SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr;
+            scs_ptr = pcs_ptr->scs_ptr;
             FrameHeader *frm_hdr = &pcs_ptr->parent_pcs_ptr->frm_hdr;
             rc                   = &scs_ptr->encode_context_ptr->rc;
             if (scs_ptr->passes > 1 && scs_ptr->static_config.max_bit_rate)
@@ -3059,68 +3196,109 @@ void *rate_control_kernel(void *input_ptr) {
                     (uint64_t)scs_ptr->twopass.stats_buf_ctx->total_stats->count;
             else
                 rc->rate_average_periodin_frames = 60;
+            // limit the average period to MAX_RATE_AVG_PERIOD
+            rc->rate_average_periodin_frames = MIN(rc->rate_average_periodin_frames,
+                                                   MAX_RATE_AVG_PERIOD);
+
             if (!is_superres_recode_task) {
-                pcs_ptr->parent_pcs_ptr->blk_lambda_tuning = EB_FALSE;
+                pcs_ptr->parent_pcs_ptr->blk_lambda_tuning = FALSE;
             }
             reset_rc_param(pcs_ptr->parent_pcs_ptr);
-            // Frame level RC. Find the ParamPtr for the current GOP
-            {
-                uint32_t interval_index_temp = 0;
-                EbBool   interval_found      = EB_FALSE;
-                while ((interval_index_temp < PARALLEL_GOP_MAX_NUMBER) && !interval_found) {
-                    if (pcs_ptr->picture_number >=
-                            context_ptr->rate_control_param_queue[interval_index_temp]->first_poc &&
-                        pcs_ptr->picture_number <=
-                            context_ptr->rate_control_param_queue[interval_index_temp]->last_poc) {
-                        interval_found = EB_TRUE;
-                    } else
-                        interval_index_temp++;
-                }
-                CHECK_REPORT_ERROR(interval_index_temp != PARALLEL_GOP_MAX_NUMBER,
-                                   scs_ptr->encode_context_ptr->app_callback_ptr,
-                                   EB_ENC_RC_ERROR2);
 
-                rate_control_param_ptr = context_ptr->rate_control_param_queue[interval_index_temp];
-            }
-            pcs_ptr->parent_pcs_ptr->rate_control_param_ptr = rate_control_param_ptr;
-            if (!is_superres_recode_task) {
-                if (scs_ptr->static_config.rate_control_mode) {
-                    if (pcs_ptr->picture_number == 0) {
-                        set_rc_buffer_sizes(scs_ptr);
-                        av1_rc_init(scs_ptr);
+            if (pcs_ptr->parent_pcs_ptr->is_overlay) {
+                // overlay: ppcs->picture_qp has been updated by altref RC_INPUT
+                pcs_ptr->picture_qp = pcs_ptr->parent_pcs_ptr->picture_qp;
+            } else {
+                if (!is_superres_recode_task) {
+                    if (scs_ptr->static_config.rate_control_mode) {
+                        if (pcs_ptr->picture_number == 0) {
+                            set_rc_buffer_sizes(scs_ptr);
+                            av1_rc_init(scs_ptr);
+                        }
+                        svt_block_on_mutex(scs_ptr->encode_context_ptr->stat_file_mutex);
+                        restore_param(pcs_ptr->parent_pcs_ptr,
+                                      pcs_ptr->parent_pcs_ptr->rate_control_param_ptr);
+
+                        if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_CBR)
+                            one_pass_rt_rate_alloc(pcs_ptr->parent_pcs_ptr);
+                        else
+                            process_rc_stat(pcs_ptr->parent_pcs_ptr);
+
+                        av1_set_target_rate(pcs_ptr);
+                        store_param(pcs_ptr->parent_pcs_ptr,
+                                    pcs_ptr->parent_pcs_ptr->rate_control_param_ptr);
+                        svt_release_mutex(scs_ptr->encode_context_ptr->stat_file_mutex);
                     }
-                    restore_param(pcs_ptr->parent_pcs_ptr, rate_control_param_ptr);
-                    if (scs_ptr->static_config.rate_control_mode == 2 &&
-                        scs_ptr->static_config.pred_structure == EB_PRED_LOW_DELAY_P)
-                        svt_av1_get_one_pass_rt_params(pcs_ptr->parent_pcs_ptr);
-                    else
-                        svt_av1_get_second_pass_params(pcs_ptr->parent_pcs_ptr);
-
-                    av1_configure_buffer_updates(
-                        pcs_ptr, &(pcs_ptr->parent_pcs_ptr->refresh_frame), 0);
-                    av1_set_target_rate(pcs_ptr);
-                    store_param(pcs_ptr->parent_pcs_ptr, rate_control_param_ptr);
                 }
-            }
 
-            if (scs_ptr->static_config.rate_control_mode == 0) {
-                // if RC mode is 0,  fixed QP is used
-                // QP scaling based on POC number for Flat IPPP structure
-                frm_hdr->quantization_params.base_q_idx = quantizer_to_qindex[pcs_ptr->picture_qp];
+                if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_CQP_OR_CRF) {
+                    // if RC mode is 0,  fixed QP is used
+                    // QP scaling based on POC number for Flat IPPP structure
+                    frm_hdr->quantization_params.base_q_idx =
+                        quantizer_to_qindex[pcs_ptr->picture_qp];
+                    if (pcs_ptr->parent_pcs_ptr->qp_on_the_fly == TRUE) {
+                        pcs_ptr->picture_qp = (uint8_t)CLIP3(
+                            (int32_t)scs_ptr->static_config.min_qp_allowed,
+                            (int32_t)scs_ptr->static_config.max_qp_allowed,
+                            pcs_ptr->parent_pcs_ptr->picture_qp);
+                        frm_hdr->quantization_params.base_q_idx =
+                            quantizer_to_qindex[pcs_ptr->picture_qp];
 
-                if (scs_ptr->static_config.use_fixed_qindex_offsets == 1) {
-                    pcs_ptr->picture_qp = scs_ptr->static_config.qp;
-                    int32_t qindex      = quantizer_to_qindex[(uint8_t)scs_ptr->static_config.qp];
-                    if (!frame_is_intra_only(pcs_ptr->parent_pcs_ptr)) {
-                        qindex +=
-                            scs_ptr->static_config.qindex_offsets[pcs_ptr->temporal_layer_index];
                     } else {
-                        qindex += scs_ptr->static_config.key_frame_qindex_offset;
+                        if (scs_ptr->enable_qp_scaling_flag) {
+                            const int32_t qindex =
+                                quantizer_to_qindex[(uint8_t)scs_ptr->static_config.qp];
+                            // if there are need enough pictures in the LAD/SlidingWindow, the adaptive QP scaling is not used
+                            int32_t new_qindex;
+                            if (scs_ptr->static_config.pass != ENC_FIRST_PASS) {
+                                // if CRF
+                                if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.enable) {
+                                    if (pcs_ptr->picture_number == 0) {
+                                        rc->active_worst_quality =
+                                            quantizer_to_qindex[(uint8_t)scs_ptr->static_config.qp];
+                                        av1_rc_init(scs_ptr);
+                                    }
+                                    new_qindex = crf_qindex_calc(
+                                        pcs_ptr, rc, rc->active_worst_quality);
+                                } else // if CQP
+                                    new_qindex = cqp_qindex_calc(pcs_ptr, qindex);
+                            } else {
+                                new_qindex = find_fp_qindex(
+                                    (EbBitDepth)scs_ptr->static_config.encoder_bit_depth);
+                            }
+                            frm_hdr->quantization_params.base_q_idx = (uint8_t)CLIP3(
+                                (int32_t)quantizer_to_qindex[scs_ptr->static_config.min_qp_allowed],
+                                (int32_t)quantizer_to_qindex[scs_ptr->static_config.max_qp_allowed],
+                                (int32_t)(new_qindex));
+                        }
+
+                        if (scs_ptr->static_config.use_fixed_qindex_offsets) {
+                            int32_t qindex = scs_ptr->static_config.use_fixed_qindex_offsets == 1
+                                ? quantizer_to_qindex[(uint8_t)scs_ptr->static_config.qp]
+                                : frm_hdr->quantization_params
+                                      .base_q_idx; // do not shut the auto QPS if use_fixed_qindex_offsets 2
+
+                            if (!frame_is_intra_only(pcs_ptr->parent_pcs_ptr)) {
+                                qindex += scs_ptr->static_config
+                                              .qindex_offsets[pcs_ptr->temporal_layer_index];
+                            } else {
+                                qindex += scs_ptr->static_config.key_frame_qindex_offset;
+                            }
+
+                            qindex = CLIP3(
+                                quantizer_to_qindex[scs_ptr->static_config.min_qp_allowed],
+                                quantizer_to_qindex[scs_ptr->static_config.max_qp_allowed],
+                                qindex);
+
+                            frm_hdr->quantization_params.base_q_idx = qindex;
+                        }
+
+                        pcs_ptr->picture_qp = (uint8_t)CLIP3(
+                            (int32_t)scs_ptr->static_config.min_qp_allowed,
+                            (int32_t)scs_ptr->static_config.max_qp_allowed,
+                            (frm_hdr->quantization_params.base_q_idx + 2) >> 2);
                     }
-                    qindex = CLIP3(quantizer_to_qindex[scs_ptr->static_config.min_qp_allowed],
-                                   quantizer_to_qindex[scs_ptr->static_config.max_qp_allowed],
-                                   qindex);
-                    int32_t chroma_qindex = qindex;
+                    int32_t chroma_qindex = frm_hdr->quantization_params.base_q_idx;
                     if (frame_is_intra_only(pcs_ptr->parent_pcs_ptr)) {
                         chroma_qindex += scs_ptr->static_config.key_frame_chroma_qindex_offset;
                     } else {
@@ -3132,47 +3310,37 @@ void *rate_control_kernel(void *input_ptr) {
                         quantizer_to_qindex[scs_ptr->static_config.min_qp_allowed],
                         quantizer_to_qindex[scs_ptr->static_config.max_qp_allowed],
                         chroma_qindex);
-                    frm_hdr->quantization_params.base_q_idx = qindex;
+
                     frm_hdr->quantization_params.delta_q_dc[1] =
-                        frm_hdr->quantization_params.delta_q_dc[2] = frm_hdr->quantization_params
-                                                                         .delta_q_ac[1] =
-                            frm_hdr->quantization_params.delta_q_ac[2] = (chroma_qindex - qindex);
-                    pcs_ptr->picture_qp                                = (uint8_t)CLIP3(
-                        (int32_t)scs_ptr->static_config.min_qp_allowed,
-                        (int32_t)scs_ptr->static_config.max_qp_allowed,
-                        (frm_hdr->quantization_params.base_q_idx + 2) >> 2);
-                    /*
-                    printf("\nSVT: Frame Type = %s, PicNumber = %lld, DecoderOrder = %lld, Temp Layer "
-                           "Index = %d, Picture QP = %d, Picture Qindex = %d, Picture Chroma Qindex = %d\n",
-                           frame_is_intra_only(pcs_ptr->parent_pcs_ptr) ? "INTRA" : "INTER",
-                           pcs_ptr->picture_number,
-                           pcs_ptr->parent_pcs_ptr->decode_order,
-                           pcs_ptr->temporal_layer_index,
-                           pcs_ptr->picture_qp,
-                           frm_hdr->quantization_params.base_q_idx,
-                           chroma_qindex);
-*/
-                } else if (scs_ptr->enable_qp_scaling_flag &&
-                           pcs_ptr->parent_pcs_ptr->qp_on_the_fly == EB_FALSE) {
-                    const int32_t qindex = quantizer_to_qindex[(uint8_t)scs_ptr->static_config.qp];
-                    // if there are need enough pictures in the LAD/SlidingWindow, the adaptive QP scaling is not used
-                    int32_t new_qindex;
-                    if (scs_ptr->static_config.pass != ENC_FIRST_PASS) {
-                        // Content adaptive qp assignment
-                        if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.enable) {
-                            if (pcs_ptr->picture_number == 0) {
-                                rc->active_worst_quality =
-                                    quantizer_to_qindex[(uint8_t)scs_ptr->static_config.qp];
-                                av1_rc_init(scs_ptr);
-                            }
-                            new_qindex = cqp_qindex_calc_tpl_la(
-                                pcs_ptr, rc, rc->active_worst_quality);
-                        } else
-                            new_qindex = cqp_qindex_calc(pcs_ptr, qindex);
-                    } else {
-                        new_qindex = find_fp_qindex(
-                            (AomBitDepth)scs_ptr->static_config.encoder_bit_depth);
+                        frm_hdr->quantization_params.delta_q_dc[2] =
+                            frm_hdr->quantization_params.delta_q_ac[1] =
+                                frm_hdr->quantization_params.delta_q_ac[2] = chroma_qindex -
+                        frm_hdr->quantization_params.base_q_idx;
+                    if (scs_ptr->enable_qp_scaling_flag &&
+                        pcs_ptr->parent_pcs_ptr->qp_on_the_fly == FALSE) {
+                        // max bit rate is only active for 1 pass CRF
+                        if (scs_ptr->static_config.rate_control_mode ==
+                                SVT_AV1_RC_MODE_CQP_OR_CRF &&
+                            scs_ptr->static_config.max_bit_rate)
+                            crf_assign_max_rate(pcs_ptr->parent_pcs_ptr);
                     }
+                    pcs_ptr->parent_pcs_ptr->picture_qp = pcs_ptr->picture_qp;
+                    setup_segmentation(pcs_ptr, scs_ptr);
+                } else {
+                    // ***Rate Control***
+                    int32_t new_qindex;
+                    int32_t update_type = pcs_ptr->parent_pcs_ptr->update_type;
+                    if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.enable &&
+                        pcs_ptr->parent_pcs_ptr->r0 != 0 &&
+                        (update_type == KF_UPDATE || update_type == GF_UPDATE ||
+                         update_type == ARF_UPDATE)) {
+                        process_tpl_stats_frame_kf_gfu_boost(pcs_ptr);
+                    }
+                    // Qindex calculating
+                    if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_CBR)
+                        new_qindex = rc_pick_q_and_bounds_no_stats_cbr(pcs_ptr);
+                    else
+                        new_qindex = rc_pick_q_and_bounds(pcs_ptr);
                     frm_hdr->quantization_params.base_q_idx = (uint8_t)CLIP3(
                         (int32_t)quantizer_to_qindex[scs_ptr->static_config.min_qp_allowed],
                         (int32_t)quantizer_to_qindex[scs_ptr->static_config.max_qp_allowed],
@@ -3182,82 +3350,62 @@ void *rate_control_kernel(void *input_ptr) {
                         (int32_t)scs_ptr->static_config.min_qp_allowed,
                         (int32_t)scs_ptr->static_config.max_qp_allowed,
                         (frm_hdr->quantization_params.base_q_idx + 2) >> 2);
-                    // max bit rate is only active for 1 pass CRF
-                    if (scs_ptr->static_config.rate_control_mode == 0 &&
-                        scs_ptr->static_config.max_bit_rate)
-                        crf_assign_max_rate(pcs_ptr->parent_pcs_ptr);
-                } else if (pcs_ptr->parent_pcs_ptr->qp_on_the_fly == EB_TRUE) {
-                    pcs_ptr->picture_qp = (uint8_t)CLIP3(
-                        (int32_t)scs_ptr->static_config.min_qp_allowed,
-                        (int32_t)scs_ptr->static_config.max_qp_allowed,
-                        pcs_ptr->parent_pcs_ptr->picture_qp);
+
+                    //Limiting the QP based on the QP of the Reference frame
+                    if ((int32_t)pcs_ptr->temporal_layer_index != 0) {
+                        uint32_t ref_qp = 0;
+                        if (pcs_ptr->ref_slice_type_array[0][0] != I_SLICE)
+                            ref_qp = pcs_ptr->ref_pic_qp_array[0][0];
+                        if ((pcs_ptr->slice_type == B_SLICE) &&
+                            (pcs_ptr->ref_slice_type_array[1][0] != I_SLICE))
+                            ref_qp = MAX(ref_qp, pcs_ptr->ref_pic_qp_array[1][0]);
+                        if (scs_ptr->static_config.gop_constraint_rc) {
+                            if (ref_qp > 2 && pcs_ptr->picture_qp < ref_qp - 2) {
+                                pcs_ptr->picture_qp = (uint8_t)CLIP3(
+                                    scs_ptr->static_config.min_qp_allowed,
+                                    scs_ptr->static_config.max_qp_allowed,
+                                    (uint8_t)(ref_qp - 2));
+                            }
+                        } else {
+                            if (ref_qp > 0 && pcs_ptr->picture_qp < ref_qp) {
+                                pcs_ptr->picture_qp = (uint8_t)CLIP3(
+                                    scs_ptr->static_config.min_qp_allowed,
+                                    scs_ptr->static_config.max_qp_allowed,
+                                    (uint8_t)(ref_qp));
+                            }
+                        }
+                    }
                     frm_hdr->quantization_params.base_q_idx =
                         quantizer_to_qindex[pcs_ptr->picture_qp];
                 }
-
-                pcs_ptr->parent_pcs_ptr->picture_qp = pcs_ptr->picture_qp;
-                setup_segmentation(pcs_ptr, scs_ptr);
-            } else {
-                // ***Rate Control***
-                int32_t new_qindex;
-                int32_t update_type = scs_ptr->encode_context_ptr->gf_group
-                                          .update_type[pcs_ptr->parent_pcs_ptr->gf_group_index];
-
-                if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.enable && pcs_ptr->parent_pcs_ptr->r0 != 0 &&
-                    (update_type == KF_UPDATE || update_type == GF_UPDATE ||
-                     update_type == ARF_UPDATE)) {
-                    process_tpl_stats_frame_kf_gfu_boost(pcs_ptr);
+                if (pcs_ptr->parent_pcs_ptr->slice_type == I_SLICE) {
+                    pcs_ptr->parent_pcs_ptr->rate_control_param_ptr->last_i_qp =
+                        pcs_ptr->picture_qp;
+                } else if (pcs_ptr->parent_pcs_ptr->transition_present == 1 &&
+                           pcs_ptr->parent_pcs_ptr->slice_type != P_SLICE) {
+                    pcs_ptr->picture_qp = (uint8_t)CLIP3(
+                        scs_ptr->static_config.min_qp_allowed,
+                        scs_ptr->static_config.max_qp_allowed,
+                        (uint32_t)((pcs_ptr->picture_qp +
+                                    pcs_ptr->parent_pcs_ptr->rate_control_param_ptr->last_i_qp) /
+                                   2));
+                    frm_hdr->quantization_params.base_q_idx =
+                        quantizer_to_qindex[pcs_ptr->picture_qp];
                 }
-                // Qindex calculating
-                if (scs_ptr->static_config.rate_control_mode == 2 &&
-                    scs_ptr->static_config.pass == ENC_SINGLE_PASS)
-                    new_qindex = rc_pick_q_and_bounds_no_stats_cbr(pcs_ptr);
-                else
-                    new_qindex = rc_pick_q_and_bounds(pcs_ptr);
-                frm_hdr->quantization_params.base_q_idx = (uint8_t)CLIP3(
-                    (int32_t)quantizer_to_qindex[scs_ptr->static_config.min_qp_allowed],
-                    (int32_t)quantizer_to_qindex[scs_ptr->static_config.max_qp_allowed],
-                    (int32_t)(new_qindex));
-
-                pcs_ptr->picture_qp = (uint8_t)CLIP3(
-                    (int32_t)scs_ptr->static_config.min_qp_allowed,
-                    (int32_t)scs_ptr->static_config.max_qp_allowed,
-                    (frm_hdr->quantization_params.base_q_idx + 2) >> 2);
-
-                //Limiting the QP based on the QP of the Reference frame
-                if ((int32_t)pcs_ptr->temporal_layer_index != 0) {
-                    uint32_t ref_qp = 0;
-                    if (pcs_ptr->ref_slice_type_array[0][0] != I_SLICE)
-                        ref_qp = pcs_ptr->ref_pic_qp_array[0][0];
-                    if ((pcs_ptr->slice_type == B_SLICE) &&
-                        (pcs_ptr->ref_slice_type_array[1][0] != I_SLICE))
-                        ref_qp = MAX(ref_qp, pcs_ptr->ref_pic_qp_array[1][0]);
-                    if (ref_qp > 0 && pcs_ptr->picture_qp < ref_qp) {
-                        pcs_ptr->picture_qp = (uint8_t)CLIP3(scs_ptr->static_config.min_qp_allowed,
-                                                             scs_ptr->static_config.max_qp_allowed,
-                                                             (uint8_t)(ref_qp));
-                    }
-                }
-                frm_hdr->quantization_params.base_q_idx = quantizer_to_qindex[pcs_ptr->picture_qp];
-            }
-            if (pcs_ptr->parent_pcs_ptr->slice_type == I_SLICE) {
-                rate_control_param_ptr->last_i_qp = pcs_ptr->picture_qp;
-            } else if (pcs_ptr->parent_pcs_ptr->transition_present) {
-                uint32_t min_ref_qp = rate_control_param_ptr->last_i_qp;
-                if (pcs_ptr->ref_slice_type_array[0][0] != I_SLICE)
-                    min_ref_qp = pcs_ptr->ref_pic_qp_array[0][0];
-                if ((pcs_ptr->slice_type == B_SLICE) &&
-                    (pcs_ptr->ref_slice_type_array[1][0] != I_SLICE))
-                    min_ref_qp = MIN(min_ref_qp, pcs_ptr->ref_pic_qp_array[1][0]);
-
-                pcs_ptr->picture_qp = (uint8_t)CLIP3(
-                    scs_ptr->static_config.min_qp_allowed,
-                    scs_ptr->static_config.max_qp_allowed,
-                    (min_ref_qp + rate_control_param_ptr->last_i_qp) / 2);
-
-                frm_hdr->quantization_params.base_q_idx = quantizer_to_qindex[pcs_ptr->picture_qp];
             }
             pcs_ptr->parent_pcs_ptr->picture_qp = pcs_ptr->picture_qp;
+
+            if (pcs_ptr->parent_pcs_ptr->is_alt_ref) {
+                // overlay use the same QP with alt_ref, to align with
+                // rate_control_param_queue update code in below RC_PACKETIZATION_FEEDBACK_RESULT.
+                PictureParentControlSet *overlay_ppcs_ptr =
+                    pcs_ptr->parent_pcs_ptr->overlay_ppcs_ptr;
+                FrameHeader *overlay_frm_hdr = &overlay_ppcs_ptr->frm_hdr;
+                overlay_ppcs_ptr->picture_qp = pcs_ptr->picture_qp;
+                memcpy(&overlay_frm_hdr->quantization_params,
+                       &frm_hdr->quantization_params,
+                       sizeof(overlay_frm_hdr->quantization_params));
+            }
 
             if (!is_superres_recode_task) {
                 // Determine superres parameters for 1-pass encoding or 2nd pass of 2-pass encoding
@@ -3267,7 +3415,8 @@ void *rate_control_kernel(void *input_ptr) {
                     if (scs_ptr->static_config.superres_mode > SUPERRES_RANDOM) {
                         // determine denom and scale down picture by selected denom
                         init_resize_picture(scs_ptr, pcs_ptr->parent_pcs_ptr);
-                        if (pcs_ptr->parent_pcs_ptr->frame_superres_enabled) {
+                        if (pcs_ptr->parent_pcs_ptr->frame_superres_enabled ||
+                            pcs_ptr->parent_pcs_ptr->frame_resize_enabled) {
                             // reset gm based on super-res on/off
                             set_gm_controls(pcs_ptr->parent_pcs_ptr,
                                             derive_gm_level(pcs_ptr->parent_pcs_ptr));
@@ -3334,9 +3483,12 @@ void *rate_control_kernel(void *input_ptr) {
             if (scs_ptr->static_config.enable_adaptive_quantization == 2 &&
                 pcs_ptr->parent_pcs_ptr->tpl_ctrls.enable && pcs_ptr->parent_pcs_ptr->r0 != 0) {
                 sb_qp_derivation_tpl_la(pcs_ptr);
+            } else if (scs_ptr->static_config.enable_adaptive_quantization &&
+                       scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_CBR) {
+                sb_qp_derivation(pcs_ptr);
             } else {
                 pcs_ptr->parent_pcs_ptr->frm_hdr.delta_q_params.delta_q_present = 0;
-                for (int sb_addr = 0; sb_addr < pcs_ptr->sb_total_count_pix; ++sb_addr) {
+                for (int sb_addr = 0; sb_addr < pcs_ptr->sb_total_count; ++sb_addr) {
                     SuperBlock *sb_ptr = pcs_ptr->sb_ptr_array[sb_addr];
                     sb_ptr->qindex     = quantizer_to_qindex[pcs_ptr->picture_qp];
                 }
@@ -3344,6 +3496,10 @@ void *rate_control_kernel(void *input_ptr) {
             if (scs_ptr->static_config.rate_control_mode && !is_superres_recode_task) {
                 update_rc_counts(pcs_ptr->parent_pcs_ptr);
             }
+
+            // Derive a QP per 64x64 using ME distortions (to be used for lambda modulation only; not at Q/Q-1)
+            if (scs_ptr->stats_based_sb_lambda_modulation)
+                generate_b64_me_qindex_map(pcs_ptr);
             // Get Empty Rate Control Results Buffer
             svt_get_empty_object(context_ptr->rate_control_output_results_fifo_ptr,
                                  &rate_control_results_wrapper_ptr);
@@ -3364,57 +3520,50 @@ void *rate_control_kernel(void *input_ptr) {
 
             parentpicture_control_set_ptr = (PictureParentControlSet *)
                                                 rate_control_tasks_ptr->pcs_wrapper_ptr->object_ptr;
-            scs_ptr = (SequenceControlSet *)
-                          parentpicture_control_set_ptr->scs_wrapper_ptr->object_ptr;
+            scs_ptr = parentpicture_control_set_ptr->scs_ptr;
+            // Prevent double counting fames with overlay to so we don't
+            // increase processed_frame_number twice per frame
+            if (!parentpicture_control_set_ptr->is_overlay) {
+                svt_block_on_mutex(scs_ptr->encode_context_ptr->rc_param_queue_mutex);
+                parentpicture_control_set_ptr->rate_control_param_ptr->processed_frame_number++;
 
-            if (scs_ptr->static_config.intra_period_length != -1 &&
-                scs_ptr->static_config.rate_control_mode != 0) {
-                uint32_t interval_index_temp = 0;
-                for (RateControlIntervalParamContext **rc_param_queue =
-                         context_ptr->rate_control_param_queue;
-                     interval_index_temp < PARALLEL_GOP_MAX_NUMBER &&
-                     (rc_param_queue[interval_index_temp]->first_poc >
-                          parentpicture_control_set_ptr->picture_number ||
-                      rc_param_queue[interval_index_temp]->last_poc <
-                          parentpicture_control_set_ptr->picture_number);
-                     ++interval_index_temp) {}
-                CHECK_REPORT_ERROR(interval_index_temp != PARALLEL_GOP_MAX_NUMBER,
-                                   scs_ptr->encode_context_ptr->app_callback_ptr,
-                                   EB_ENC_RC_ERROR2);
-                rate_control_param_ptr = context_ptr->rate_control_param_queue[interval_index_temp];
-                rate_control_param_ptr->processed_frame_number++;
                 // check if all the frames in the interval have arrived
-                if (scs_ptr->static_config.intra_period_length + 1 ==
-                    rate_control_param_ptr->processed_frame_number) {
-                    uint64_t shift_count = (uint64_t)(scs_ptr->static_config.intra_period_length +
-                                                      1) *
-                        PARALLEL_GOP_MAX_NUMBER;
-                    rate_control_param_ptr->first_poc += shift_count;
-                    rate_control_param_ptr->last_poc += shift_count;
-                    rate_control_param_ptr->processed_frame_number = 0;
+                if (parentpicture_control_set_ptr->rate_control_param_ptr->size ==
+                    parentpicture_control_set_ptr->rate_control_param_ptr->processed_frame_number) {
+                    rc_param_reset(parentpicture_control_set_ptr->rate_control_param_ptr);
                 }
+                svt_release_mutex(scs_ptr->encode_context_ptr->rc_param_queue_mutex);
             }
             if (scs_ptr->static_config.rate_control_mode) {
-                restore_gf_group_param(parentpicture_control_set_ptr);
-                av1_rc_postencode_update(parentpicture_control_set_ptr);
-                // Qindex calculating
-                if (!(scs_ptr->static_config.rate_control_mode == 2 &&
-                      scs_ptr->static_config.pass == ENC_SINGLE_PASS))
-                    svt_av1_twopass_postencode_update(parentpicture_control_set_ptr);
+                if (scs_ptr->static_config.gop_constraint_rc) {
+                    av1_rc_postencode_update_gop_const(parentpicture_control_set_ptr);
+                    // Qindex calculating
+                    if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_VBR)
+                        svt_av1_twopass_postencode_update_gop_const(parentpicture_control_set_ptr);
+                } else {
+                    av1_rc_postencode_update(parentpicture_control_set_ptr);
+                    // Qindex calculating
+                    if (scs_ptr->static_config.rate_control_mode == SVT_AV1_RC_MODE_VBR)
+                        svt_av1_twopass_postencode_update(parentpicture_control_set_ptr);
+                }
             }
             // Queue variables
             if (scs_ptr->static_config.max_bit_rate)
                 coded_frames_stat_calc(parentpicture_control_set_ptr);
             total_number_of_fb_frames++;
-
-            // Release the SequenceControlSet
-            svt_release_object(parentpicture_control_set_ptr->scs_wrapper_ptr);
             // Release the ParentPictureControlSet
-            //y8b needs to get decremented at the same time of regular input
-            //  svt_release_object_with_call_stack(parentpicture_control_set_ptr->eb_y8b_wrapper_ptr, 3000, parentpicture_control_set_ptr->picture_number);
-            svt_release_object(parentpicture_control_set_ptr->eb_y8b_wrapper_ptr);
+
+            if (parentpicture_control_set_ptr->eb_y8b_wrapper_ptr) {
+                //y8b needs to get decremented at the same time of regular input
+                svt_release_object(parentpicture_control_set_ptr->eb_y8b_wrapper_ptr);
+            }
+
+            // free private data list before release input picture buffer
+            free_private_data_list((EbBufferHeaderType *)parentpicture_control_set_ptr
+                                       ->input_picture_wrapper_ptr->object_ptr);
 
             svt_release_object(parentpicture_control_set_ptr->input_picture_wrapper_ptr);
+
             svt_release_object(rate_control_tasks_ptr->pcs_wrapper_ptr);
 
             // Release Rate Control Tasks
@@ -3423,7 +3572,7 @@ void *rate_control_kernel(void *input_ptr) {
 
         default:
             pcs_ptr = (PictureControlSet *)rate_control_tasks_ptr->pcs_wrapper_ptr->object_ptr;
-            scs_ptr = (SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr;
+            scs_ptr = pcs_ptr->scs_ptr;
 
             break;
         }

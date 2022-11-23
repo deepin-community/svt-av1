@@ -17,15 +17,13 @@
 extern "C" {
 #endif
 #pragma pack(push, 1)
-
 typedef union Mv {
     struct {
-        signed short x;
-        signed short y;
+        int16_t x;
+        int16_t y;
     };
-    uint32_t mv_union;
+    uint32_t as_int;
 } Mv;
-
 #pragma pack(pop)
 
 #pragma pack(push, 1)

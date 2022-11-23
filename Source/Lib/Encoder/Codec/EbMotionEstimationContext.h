@@ -272,17 +272,17 @@ typedef struct IntraReferenceSamplesOpenLoop {
     // Scratch buffers used in the interpolaiton process
     uint8_t reference_above_line_y[MAX_INTRA_REFERENCE_SAMPLES];
     uint8_t reference_left_line_y[MAX_INTRA_REFERENCE_SAMPLES];
-    EbBool  above_ready_flag_y;
-    EbBool  left_ready_flag_y;
+    Bool    above_ready_flag_y;
+    Bool    left_ready_flag_y;
 } IntraReferenceSamplesOpenLoop;
 
 typedef struct MeHmeRefPruneCtrls {
-    EbBool enable_me_hme_ref_pruning;
+    Bool enable_me_hme_ref_pruning;
     uint16_t
         prune_ref_if_hme_sad_dev_bigger_than_th; // TH used to prune references based on hme sad deviation
     uint16_t
         prune_ref_if_me_sad_dev_bigger_than_th; // TH used to prune references based on me sad deviation
-    EbBool protect_closest_refs; // if true, do not prune closest ref frames
+    Bool protect_closest_refs; // if true, do not prune closest ref frames
 } MeHmeRefPruneCtrls;
 
 typedef struct MeSrCtrls {
@@ -378,10 +378,10 @@ typedef struct MeContext {
     EbBitFraction     *mvd_bits_array;
     uint8_t            hme_search_method;
     uint8_t            me_search_method;
-    EbBool             enable_hme_flag;
-    EbBool             enable_hme_level0_flag;
-    EbBool             enable_hme_level1_flag;
-    EbBool             enable_hme_level2_flag;
+    Bool               enable_hme_flag;
+    Bool               enable_hme_level0_flag;
+    Bool               enable_hme_level1_flag;
+    Bool               enable_hme_level2_flag;
     MeHmeRefPruneCtrls me_hme_prune_ctrls;
     MeSrCtrls          me_sr_adjustment_ctrls;
     uint8_t            max_hme_sr_area_multipler;
@@ -439,7 +439,7 @@ typedef struct MeContext {
     uint8_t                     num_of_list_to_search;
     uint8_t                     num_of_ref_pic_to_search[2];
     uint8_t                     temporal_layer_index;
-    EbBool                      is_used_as_reference_flag;
+    Bool                        is_used_as_reference_flag;
     EbDownScaledBufDescPtrArray me_ds_ref_array[MAX_NUM_OF_REF_PIC_LIST][REF_LIST_MAX_DEPTH];
     // tf
     uint8_t      tf_chroma;
@@ -456,7 +456,6 @@ typedef struct MeContext {
     signed short tf_32x32_mv_y[4];
     uint64_t     tf_32x32_block_error[4];
     int          tf_32x32_block_split_flag[4];
-    int          tf_16x16_search_do[4];
     int          tf_block_row;
     int          tf_block_col;
     uint32_t     idx_32x32;
@@ -465,17 +464,17 @@ typedef struct MeContext {
     uint8_t      use_best_unipred_cand_only; // Use only the best unipred candidate when MRP is off
     uint8_t      reduce_hme_l0_sr_th_min;
     uint8_t      reduce_hme_l0_sr_th_max;
-    uint8_t      stat_factor;
     uint16_t     tf_me_exit_th;
     uint8_t      tf_use_pred_64x64_only_th;
+    uint8_t      tf_subpel_early_exit;
     uint32_t     zz_sad[MAX_NUM_OF_REF_PIC_LIST][REF_LIST_MAX_DEPTH];
     uint32_t     me_early_exit_th;
     uint32_t     tf_tot_vert_blks; //total vertical motion blocks in TF
     uint32_t     tf_tot_horz_blks; //total horizontal motion blocks in TF
     uint8_t      skip_frame;
     uint8_t      bypass_blk_step;
-    uint32_t     block_width;
-    uint32_t     block_height;
+    uint32_t     b64_width;
+    uint32_t     b64_height;
 } MeContext;
 
 typedef uint64_t (*EB_ME_DISTORTION_FUNC)(uint8_t *src, uint32_t src_stride, uint8_t *ref,

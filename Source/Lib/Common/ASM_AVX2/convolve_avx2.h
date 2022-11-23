@@ -18,7 +18,6 @@
 #include "EbMemory_AVX2.h"
 #include "EbMemory_SSE4_1.h"
 #include "synonyms.h"
-#include "synonyms_avx2.h"
 
 #define LEFT_SHIFT (2 * FILTER_BITS - 3 - COMPOUND_ROUND1_BITS)
 
@@ -67,16 +66,16 @@ void jnt_convolve_2d_ver_4tap_avx2(const int16_t *const im_block, const int32_t 
                                    const ConvolveParams *const conv_params, uint8_t *dst8,
                                    const int32_t dst8_stride);
 
-static INLINE EbBool is_convolve_2tap(const int16_t *const filter) {
+static INLINE Bool is_convolve_2tap(const int16_t *const filter) {
     return (const void *)filter == (const void *)bilinear_filters;
 }
 
-static INLINE EbBool is_convolve_4tap(const int16_t *const filter) {
+static INLINE Bool is_convolve_4tap(const int16_t *const filter) {
     return (const void *)filter == (const void *)sub_pel_filters_4 ||
         (const void *)filter == (const void *)sub_pel_filters_4smooth;
 }
 
-static INLINE EbBool is_convolve_6tap(const int16_t *const filter) {
+static INLINE Bool is_convolve_6tap(const int16_t *const filter) {
     return (const void *)filter == (const void *)sub_pel_filters_8 ||
         (const void *)filter == (const void *)sub_pel_filters_8smooth;
 }
@@ -686,7 +685,7 @@ static INLINE void xy_x_round_store_32_avx2(const __m256i res[2], int16_t *const
 
     r[0]             = xy_x_round_avx2(res[0]);
     r[1]             = xy_x_round_avx2(res[1]);
-    const __m256i d0 = _mm256_inserti128_si256(r[0], _mm256_extracti128_si256(r[1], 0), 1);
+    const __m256i d0 = _mm256_inserti128_si256(r[0], _mm256_castsi256_si128(r[1]), 1);
     const __m256i d1 = _mm256_inserti128_si256(r[1], _mm256_extracti128_si256(r[0], 1), 0);
     _mm256_storeu_si256((__m256i *)dst, d0);
     _mm256_storeu_si256((__m256i *)(dst + 16), d1);
@@ -910,7 +909,7 @@ static INLINE void sr_x_2tap_32_avg_avx2(const uint8_t *const src, uint8_t *cons
 
 static INLINE void jnt_no_avg_store_16x2_avx2(const __m256i src0, const __m256i src1,
                                               ConvBufType *const dst, const ptrdiff_t stride) {
-    const __m256i d0 = _mm256_inserti128_si256(src0, _mm256_extracti128_si256(src1, 0), 1);
+    const __m256i d0 = _mm256_inserti128_si256(src0, _mm256_castsi256_si128(src1), 1);
     const __m256i d1 = _mm256_inserti128_si256(src1, _mm256_extracti128_si256(src0, 1), 0);
     _mm256_storeu_si256((__m256i *)dst, d0);
     _mm256_storeu_si256((__m256i *)(dst + stride), d1);
@@ -2118,9 +2117,8 @@ static INLINE __m256i jnt_copy_load_src_16_avx2(const uint8_t *const src) {
 }
 
 static INLINE void jnt_copy_load_src_32_avx2(const uint8_t *const src, __m256i s_256[2]) {
-    const __m256i s8     = _mm256_loadu_si256((__m256i *)src);
-    const __m128i s8_lo  = _mm256_castsi256_si128(s8);
-    const __m128i s8_hi  = _mm256_extracti128_si256(s8, 1);
+    const __m128i s8_lo  = _mm_loadu_si128((__m128i *)src);
+    const __m128i s8_hi  = _mm_loadu_si128((__m128i *)(src + 16));
     const __m256i s16_lo = _mm256_cvtepu8_epi16(s8_lo);
     const __m256i s16_hi = _mm256_cvtepu8_epi16(s8_hi);
     s_256[0]             = _mm256_slli_epi16(s16_lo, LEFT_SHIFT);

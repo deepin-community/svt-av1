@@ -19,7 +19,7 @@
 
 void svt_av1_upscale_normative_rows(const Av1Common *cm, const uint8_t *src, int src_stride,
                                     uint8_t *dst, int dst_stride, int rows, int sub_x, int bd,
-                                    EbBool is_16bit_pipeline);
+                                    Bool is_16bit_pipeline);
 
 void av1_foreach_rest_unit_in_frame(Av1Common *cm, int32_t plane, RestTileStartVisitor on_tile,
                                     RestUnitVisitor on_rest_unit, void *priv);
@@ -1298,7 +1298,7 @@ void svt_av1_loop_restoration_filter_frame(Yv12BufferConfig *frame, Av1Common *c
                                      cm->subsampling_x,
                                      cm->subsampling_y,
                                      cm->use_highbitdepth,
-                                     AOM_BORDER_IN_PIXELS,
+                                     AOM_RESTORATION_FRAME_BORDER,
                                      cm->byte_alignment,
                                      NULL,
                                      NULL,
@@ -1476,11 +1476,12 @@ static void foreach_rest_unit_in_tile_seg(
         if (limits.v_end < tile_rect->bottom)
             limits.v_end -= voffset;
 
-        int32_t x0   = x_unit_start_idx * unit_size;
+        int32_t x0 = x_unit_start_idx * unit_size;
+        // for the superblock below-right. If we're at the bottom or right of the tile,
+        // this restoration unit might not exist, in which case we'll clamp accordingly.
         int32_t xend = ((int32_t)x_unit_end_idx == (int32_t)picture_width_in_units)
             ? tile_w
-            : (int32_t)x_unit_end_idx *
-                (int32_t)unit_size; //MIN(x_unit_end_idx * unit_size,tile_w);
+            : AOMMIN((int32_t)x_unit_end_idx * (int32_t)unit_size, tile_w);
         int32_t j    = x_unit_start_idx;
 
         while (x0 < xend) {

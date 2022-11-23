@@ -84,7 +84,7 @@ void set_hme_search_params(PictureParentControlSet *pcs_ptr, MeContext *me_conte
             me_context_ptr->hme_l0_sa.sa_max = (SearchArea){480, 480};
         }
     }
-    else if (pcs_ptr->enc_mode <= ENC_M5) {
+    else if (pcs_ptr->enc_mode <= ENC_M4) {
         me_context_ptr->hme_l0_sa.sa_min = (SearchArea){32, 32};
         me_context_ptr->hme_l0_sa.sa_max = (SearchArea){192, 192};
     }
@@ -102,6 +102,7 @@ void set_hme_search_params(PictureParentControlSet *pcs_ptr, MeContext *me_conte
             me_context_ptr->hme_l0_sa.sa_max = (SearchArea){192, 192};
         }
     }
+
     else if (pcs_ptr->enc_mode <= ENC_M11) {
         if (pcs_ptr->sc_class1) {
             me_context_ptr->hme_l0_sa.sa_min = (SearchArea){32, 32};
@@ -111,7 +112,7 @@ void set_hme_search_params(PictureParentControlSet *pcs_ptr, MeContext *me_conte
             me_context_ptr->hme_l0_sa.sa_max = (SearchArea) { 192, 192 };
         }
     }
-    else if (pcs_ptr->enc_mode <= ENC_M13) {
+    else {
         if (pcs_ptr->sc_class1) {
             me_context_ptr->hme_l0_sa.sa_min = (SearchArea){ 32, 32 };
             me_context_ptr->hme_l0_sa.sa_max = (SearchArea){ 192, 192 };
@@ -127,17 +128,6 @@ void set_hme_search_params(PictureParentControlSet *pcs_ptr, MeContext *me_conte
             }
         }
     }
-    else {
-        if (pcs_ptr->sc_class1) {
-            me_context_ptr->hme_l0_sa.sa_min = (SearchArea) { 16, 16 };
-            me_context_ptr->hme_l0_sa.sa_max = (SearchArea) { 96, 96 };
-        }
-        else {
-            me_context_ptr->hme_l0_sa.sa_min = (SearchArea){ 8, 8 };
-            me_context_ptr->hme_l0_sa.sa_max = (SearchArea){ 96, 96 };
-        }
-    }
-
     // Set the HME Level 1 and Level 2 refinement areas
     if (pcs_ptr->enc_mode <= ENC_M1) {
         me_context_ptr->hme_l1_sa = (SearchArea){16, 16};
@@ -153,6 +143,7 @@ void set_hme_search_params(PictureParentControlSet *pcs_ptr, MeContext *me_conte
  ************************************************/
 void set_me_search_params(SequenceControlSet *scs_ptr, PictureParentControlSet *pcs_ptr,
                           MeContext *me_context_ptr, EbInputResolution input_resolution) {
+    uint32_t hierarchical_levels = scs_ptr->static_config.hierarchical_levels;
     // Set the min and max ME search area
     if (pcs_ptr->sc_class1) {
         if (pcs_ptr->enc_mode <= ENC_M2) {
@@ -195,24 +186,57 @@ void set_me_search_params(SequenceControlSet *scs_ptr, PictureParentControlSet *
         me_context_ptr->me_sa.sa_min = (SearchArea) { 16, 16 };
         me_context_ptr->me_sa.sa_max = (SearchArea) { 64, 32 };
     }
-    else if (pcs_ptr->enc_mode <= ENC_M9) {
+    else if (pcs_ptr->enc_mode <= ENC_M7) {
         if (input_resolution < INPUT_SIZE_1080p_RANGE) {
-            me_context_ptr->me_sa.sa_min = (SearchArea){16, 16};
-            me_context_ptr->me_sa.sa_max = (SearchArea){32, 16};
-        } else {
-            me_context_ptr->me_sa.sa_min = (SearchArea){16, 6};
-            me_context_ptr->me_sa.sa_max = (SearchArea){16, 9};
-        }
-    } else if (pcs_ptr->enc_mode <= ENC_M11) {
-        if (input_resolution < INPUT_SIZE_4K_RANGE) {
-            me_context_ptr->me_sa.sa_min = (SearchArea){8, 5};
-            me_context_ptr->me_sa.sa_max = (SearchArea){16, 9};
+            me_context_ptr->me_sa.sa_min = (SearchArea) { 16, 16 };
+            me_context_ptr->me_sa.sa_max = (SearchArea) { 32, 16 };
         }
         else {
-            me_context_ptr->me_sa.sa_min = (SearchArea){8, 1};
-            me_context_ptr->me_sa.sa_max = (SearchArea){8, 1};
+            me_context_ptr->me_sa.sa_min = (SearchArea) { 16, 6 };
+            me_context_ptr->me_sa.sa_max = (SearchArea) { 16, 9 };
         }
-    } else if (pcs_ptr->enc_mode <= ENC_M12) {
+    }
+    else if (pcs_ptr->enc_mode <= ENC_M8) {
+        if (hierarchical_levels <= 3) {
+            if (input_resolution < INPUT_SIZE_4K_RANGE) {
+                me_context_ptr->me_sa.sa_min = (SearchArea) { 8, 5 };
+                me_context_ptr->me_sa.sa_max = (SearchArea) { 16, 9 };
+            }
+            else {
+                me_context_ptr->me_sa.sa_min = (SearchArea) { 8, 1 };
+                me_context_ptr->me_sa.sa_max = (SearchArea) { 8, 1 };
+            }
+        }
+        else if (input_resolution < INPUT_SIZE_1080p_RANGE) {
+            me_context_ptr->me_sa.sa_min = (SearchArea) { 16, 16 };
+            me_context_ptr->me_sa.sa_max = (SearchArea) { 32, 16 };
+        }
+        else {
+            me_context_ptr->me_sa.sa_min = (SearchArea) { 16, 6 };
+            me_context_ptr->me_sa.sa_max = (SearchArea) { 16, 9 };
+        }
+    }
+    else if (pcs_ptr->enc_mode <= ENC_M9) {
+        if (input_resolution < INPUT_SIZE_1080p_RANGE) {
+            me_context_ptr->me_sa.sa_min = (SearchArea) { 16, 16 };
+            me_context_ptr->me_sa.sa_max = (SearchArea) { 32, 16 };
+        }
+        else {
+            me_context_ptr->me_sa.sa_min = (SearchArea) { 16, 6 };
+            me_context_ptr->me_sa.sa_max = (SearchArea) { 16, 9 };
+        }
+    }
+    else if (pcs_ptr->enc_mode <= ENC_M10) {
+        if (input_resolution < INPUT_SIZE_4K_RANGE) {
+            me_context_ptr->me_sa.sa_min = (SearchArea) { 8, 5 };
+            me_context_ptr->me_sa.sa_max = (SearchArea) { 16, 9 };
+        }
+        else {
+            me_context_ptr->me_sa.sa_min = (SearchArea) { 8, 1 };
+            me_context_ptr->me_sa.sa_max = (SearchArea) { 8, 1 };
+        }
+    }
+    else if (pcs_ptr->enc_mode <= ENC_M12) {
         if (input_resolution < INPUT_SIZE_720p_RANGE) {
             me_context_ptr->me_sa.sa_min = (SearchArea){8, 3};
             me_context_ptr->me_sa.sa_max = (SearchArea){16, 9};
@@ -232,7 +256,7 @@ void set_me_search_params(SequenceControlSet *scs_ptr, PictureParentControlSet *
     }
 
     // Scale up the MIN ME area if low frame rate
-    uint8_t low_frame_rate_flag = (scs_ptr->static_config.frame_rate >> 16) < 50 ? 1 : 0;
+    bool low_frame_rate_flag = (scs_ptr->frame_rate >> 16);
     if (low_frame_rate_flag) {
         me_context_ptr->me_sa.sa_min.width  = (me_context_ptr->me_sa.sa_min.width * 3) >> 1;
         me_context_ptr->me_sa.sa_min.height = (me_context_ptr->me_sa.sa_min.height * 3) >> 1;
@@ -360,22 +384,34 @@ void set_me_sr_adjustment_ctrls(MeContext *context_ptr, uint8_t sr_adjustment_le
 /*set the skip_frame flag for ipp*/
 void set_skip_frame_in_ipp(PictureParentControlSet * pcs,MeContext *ctx) {
     ctx->skip_frame = 0;
-    if (!pcs->scs_ptr->ipp_pass_ctrls.skip_frame_first_pass) {
-        if (pcs->scs_ptr->static_config.enc_mode < ENC_M8)
+    int8_t max_heirachical_level = (int8_t)pcs->scs_ptr->max_heirachical_level;
+    int8_t enc_mode = pcs->scs_ptr->static_config.enc_mode;
+    int8_t pass = (int8_t)pcs->scs_ptr->static_config.pass;
+    uint8_t skip_frame_first_pass = pcs->scs_ptr->ipp_pass_ctrls.skip_frame_first_pass;
+    uint64_t  picture_number = pcs->picture_number;
+    if (!skip_frame_first_pass) {
+        if (enc_mode < ENC_M8)
             ctx->skip_frame = 0;
-        else if (pcs->scs_ptr->static_config.pass == ENC_SINGLE_PASS)
-            if (pcs->picture_number > 3 && pcs->picture_number % 4 > 0)
+        else if (pass == ENC_SINGLE_PASS)
+        {
+            // SINGLE PASS
+            if (max_heirachical_level <= 2)
+                ctx->skip_frame = ((enc_mode >= ENC_M10) && (picture_number > 1 && picture_number % 2 > 0)) ? 1 : 0;
+            else if ((enc_mode < ENC_M10 && (picture_number > 3 && picture_number % 4 > 0)) ||
+                (enc_mode >= ENC_M10 && (picture_number > 5 && picture_number % 6 > 0))) {
                 ctx->skip_frame = 1;
+            }
+        }
     }
     else {
-        if ((pcs->scs_ptr->ipp_pass_ctrls.skip_frame_first_pass == 1) &&
-            (pcs->picture_number % 8 > 0))
+        if ((skip_frame_first_pass == 1) &&
+            (picture_number % 8 > 0))
             ctx->skip_frame = 1;
-        else if ((pcs->scs_ptr->ipp_pass_ctrls.skip_frame_first_pass == 2) &&
-            (pcs->picture_number > 7 && pcs->picture_number % 8 > 0))
+        else if ((skip_frame_first_pass == 2) &&
+            (picture_number > 7 && picture_number % 8 > 0))
             ctx->skip_frame = 1;
         else
-            if (pcs->picture_number > 3 && pcs->picture_number % 4 > 0)
+            if (picture_number > 3 && picture_number % 4 > 0)
                 ctx->skip_frame = 1;
             else
                 ctx->skip_frame = 0;
@@ -432,13 +468,15 @@ EbErrorType signal_derivation_me_kernel_oq(SequenceControlSet *       scs_ptr,
                                            MotionEstimationContext_t *context_ptr) {
     EbErrorType return_error = EB_ErrorNone;
 
-    EbEncMode         enc_mode         = pcs_ptr->enc_mode;
+    EncMode         enc_mode         = pcs_ptr->enc_mode;
     EbInputResolution input_resolution = scs_ptr->input_resolution;
+    const uint32_t hierarchical_levels = scs_ptr->static_config.hierarchical_levels;
     // Set ME search area
     set_me_search_params(scs_ptr, pcs_ptr, context_ptr->me_context_ptr, input_resolution);
 
     // Set HME search area
     set_hme_search_params(pcs_ptr, context_ptr->me_context_ptr, input_resolution);
+
     // Set HME flags
     context_ptr->me_context_ptr->enable_hme_flag        = pcs_ptr->enable_hme_flag;
     context_ptr->me_context_ptr->enable_hme_level0_flag = pcs_ptr->enable_hme_level0_flag;
@@ -447,12 +485,7 @@ EbErrorType signal_derivation_me_kernel_oq(SequenceControlSet *       scs_ptr,
     // HME Search Method
     context_ptr->me_context_ptr->hme_search_method = SUB_SAD_SEARCH;
     context_ptr->me_context_ptr->me_search_method  = SUB_SAD_SEARCH;
-    if (pcs_ptr->sc_class1)
-        context_ptr->me_context_ptr->stat_factor = 100;
-    else if (pcs_ptr->enc_mode <= ENC_M12)
-        context_ptr->me_context_ptr->stat_factor = 100;
-    else
-        context_ptr->me_context_ptr->stat_factor = 80;
+
 
     if (pcs_ptr->sc_class1) {
         context_ptr->me_context_ptr->reduce_hme_l0_sr_th_min = 0;
@@ -472,12 +505,16 @@ EbErrorType signal_derivation_me_kernel_oq(SequenceControlSet *       scs_ptr,
         prehme_level = 1;
     else
     {
-        if (enc_mode <= ENC_M11)
+        if (enc_mode <= ENC_M10)
             prehme_level = 1;
-        else if (enc_mode <= ENC_M13)
-            prehme_level = 3;
+        else if (enc_mode <= ENC_M11) {
+            if (hierarchical_levels <= 3)
+                prehme_level = 3;
+            else
+                prehme_level = 1;
+        }
         else
-            prehme_level = 0;
+            prehme_level = 3;
     }
     if (pcs_ptr->enable_hme_level1_flag == 0)
         prehme_level = 0;
@@ -498,11 +535,21 @@ EbErrorType signal_derivation_me_kernel_oq(SequenceControlSet *       scs_ptr,
         if (enc_mode <= ENC_MRS)
             set_me_hme_ref_prune_ctrls(context_ptr->me_context_ptr, 0);
         else if (enc_mode <= ENC_M1)
-
             set_me_hme_ref_prune_ctrls(context_ptr->me_context_ptr, 2);
+        else if (enc_mode <= ENC_M2) {
+            if (pcs_ptr->temporal_layer_index == 0)
+                set_me_hme_ref_prune_ctrls(context_ptr->me_context_ptr, 2);
+            else
+                set_me_hme_ref_prune_ctrls(context_ptr->me_context_ptr, 4);
+        }
+        else if (enc_mode <= ENC_M7) {
+            if (pcs_ptr->temporal_layer_index == 0)
+                set_me_hme_ref_prune_ctrls(context_ptr->me_context_ptr, 2);
+            else
+                set_me_hme_ref_prune_ctrls(context_ptr->me_context_ptr, 5);
+        }
         else
             set_me_hme_ref_prune_ctrls(context_ptr->me_context_ptr, 5);
-
     }
     // Set hme-based me sr adjustment level
     if (pcs_ptr->sc_class1)
@@ -512,23 +559,26 @@ EbErrorType signal_derivation_me_kernel_oq(SequenceControlSet *       scs_ptr,
             set_me_sr_adjustment_ctrls(context_ptr->me_context_ptr, 5);
     else if (enc_mode <= ENC_MRS)
         set_me_sr_adjustment_ctrls(context_ptr->me_context_ptr, 0);
-    else if (enc_mode <= ENC_M3)
-        set_me_sr_adjustment_ctrls(context_ptr->me_context_ptr, 1);
     else if (enc_mode <= ENC_M4)
-        set_me_sr_adjustment_ctrls(context_ptr->me_context_ptr, 2);
+        set_me_sr_adjustment_ctrls(context_ptr->me_context_ptr, 1);
     else
         set_me_sr_adjustment_ctrls(context_ptr->me_context_ptr, 3);
-
-    if (enc_mode <= ENC_M7)
+    if (enc_mode <= ENC_M4)
         context_ptr->me_context_ptr->prune_me_candidates_th = 0;
     else
         context_ptr->me_context_ptr->prune_me_candidates_th = 65;
     // Set signal at picture level b/c may check signal in MD
     context_ptr->me_context_ptr->use_best_unipred_cand_only =
         pcs_ptr->use_best_me_unipred_cand_only;
-    if (pcs_ptr->enc_mode <= ENC_M6)
+    if (enc_mode <= ENC_M6)
         context_ptr->me_context_ptr->me_early_exit_th = 0;
-    else if (pcs_ptr->enc_mode <= ENC_M11)
+    else if (enc_mode <= ENC_M7) {
+        if (hierarchical_levels <= 3)
+            context_ptr->me_context_ptr->me_early_exit_th = BLOCK_SIZE_64 * BLOCK_SIZE_64 * 8;
+        else
+            context_ptr->me_context_ptr->me_early_exit_th = 0;
+    }
+    else if (pcs_ptr->enc_mode <= ENC_M10)
         context_ptr->me_context_ptr->me_early_exit_th = BLOCK_SIZE_64 * BLOCK_SIZE_64 * 8;
     else
         context_ptr->me_context_ptr->me_early_exit_th = BLOCK_SIZE_64 * BLOCK_SIZE_64 * 9;
@@ -622,7 +672,6 @@ EbErrorType tf_signal_derivation_me_kernel_oq(PictureParentControlSet *  pcs_ptr
     set_me_sr_adjustment_ctrls(context_ptr->me_context_ptr, 0);
 
     context_ptr->me_context_ptr->me_early_exit_th = 0;
-    context_ptr->me_context_ptr->stat_factor             = 100;
     context_ptr->me_context_ptr->reduce_hme_l0_sr_th_min = 0;
     context_ptr->me_context_ptr->reduce_hme_l0_sr_th_max = 0;
     context_ptr->me_context_ptr->skip_frame = 0;
@@ -674,7 +723,7 @@ void *motion_estimation_kernel(void *input_ptr) {
                                                      in_results_wrapper_ptr->object_ptr;
         PictureParentControlSet *pcs_ptr = (PictureParentControlSet *)
                                                in_results_ptr->pcs_wrapper_ptr->object_ptr;
-        SequenceControlSet *scs_ptr = (SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr;
+        SequenceControlSet *scs_ptr = pcs_ptr->scs_ptr;
         if (in_results_ptr->task_type == TASK_TFME)
             context_ptr->me_context_ptr->me_type = ME_MCTF;
         else if (in_results_ptr->task_type == TASK_FIRST_PASS_ME)
@@ -713,14 +762,12 @@ void *motion_estimation_kernel(void *input_ptr) {
                                         pa_ref_obj_->sixteenth_downsampled_picture_ptr;
             input_padded_picture_ptr = (EbPictureBufferDesc *)pa_ref_obj_->input_padded_picture_ptr;
 
-            if (pcs_ptr->frame_superres_enabled)
-                input_picture_ptr = pcs_ptr->enhanced_downscaled_picture_ptr;
-            else
-                input_picture_ptr = pcs_ptr->enhanced_unscaled_picture_ptr;
+            input_picture_ptr = pcs_ptr->enhanced_picture_ptr;
+
             // Segments
             uint32_t segment_index   = in_results_ptr->segment_index;
-            uint32_t pic_width_in_b64 = (pcs_ptr->aligned_width + scs_ptr->sb_sz - 1) / scs_ptr->sb_sz;
-            uint32_t picture_height_in_b64 = (pcs_ptr->aligned_height + scs_ptr->sb_sz - 1) / scs_ptr->sb_sz;
+            uint32_t pic_width_in_b64 = (pcs_ptr->aligned_width + scs_ptr->b64_size - 1) / scs_ptr->b64_size;
+            uint32_t picture_height_in_b64 = (pcs_ptr->aligned_height + scs_ptr->b64_size - 1) / scs_ptr->b64_size;
             uint32_t y_segment_index;
             uint32_t x_segment_index;
 
@@ -730,11 +777,10 @@ void *motion_estimation_kernel(void *input_ptr) {
             uint32_t y_b64_start_index = SEGMENT_START_IDX(y_segment_index, picture_height_in_b64, pcs_ptr->me_segments_row_count);
             uint32_t y_b64_end_index = SEGMENT_END_IDX(y_segment_index, picture_height_in_b64, pcs_ptr->me_segments_row_count);
 
-            EbBool skip_me = EB_FALSE;
+            Bool skip_me = FALSE;
             if (scs_ptr->static_config.pass == ENC_FIRST_PASS ||
-                (!pcs_ptr->is_used_as_reference_flag && scs_ptr->rc_stat_gen_pass_mode &&
-                 !pcs_ptr->first_frame_in_minigop))
-                skip_me = EB_TRUE;
+                is_pic_skipped(pcs_ptr))
+                skip_me = TRUE;
             // skip me for the first pass. ME is already performed
             if (!skip_me) {
                 if (pcs_ptr->slice_type != I_SLICE) {
@@ -752,8 +798,8 @@ void *motion_estimation_kernel(void *input_ptr) {
 
                             uint32_t b64_index    = (uint16_t)(x_b64_index + y_b64_index * pic_width_in_b64);
 
-                            uint32_t b64_origin_x = x_b64_index * scs_ptr->sb_sz;
-                            uint32_t b64_origin_y = y_b64_index * scs_ptr->sb_sz;
+                            uint32_t b64_origin_x = x_b64_index * scs_ptr->b64_size;
+                            uint32_t b64_origin_y = y_b64_index * scs_ptr->b64_size;
 
                             // Load the 64x64 Block from the input to the intermediate block buffer
                             uint32_t buffer_index = (input_picture_ptr->origin_y + b64_origin_y) * input_picture_ptr->stride_y +
@@ -802,19 +848,20 @@ void *motion_estimation_kernel(void *input_ptr) {
                                 context_ptr->me_context_ptr->temporal_layer_index = pcs_ptr->temporal_layer_index;
                                 context_ptr->me_context_ptr->is_used_as_reference_flag = pcs_ptr->is_used_as_reference_flag;
 
-                                if (pcs_ptr->frame_superres_enabled) {
+                                if (pcs_ptr->frame_superres_enabled || pcs_ptr->frame_resize_enabled) {
                                     for (int i = 0;  i < context_ptr->me_context_ptr->num_of_list_to_search; i++) {
                                         for (int j = 0; j < context_ptr->me_context_ptr->num_of_ref_pic_to_search[i]; j++) {
                                             //assert((int)pcs_ptr->ref_pa_pic_ptr_array[i][j]->live_count > 0);
-                                            uint8_t denom_idx = (uint8_t)(pcs_ptr->superres_denom - SCALE_NUMERATOR - 1);
+                                            uint8_t sr_denom_idx = get_denom_idx(pcs_ptr->superres_denom);
+                                            uint8_t resize_denom_idx = get_denom_idx(pcs_ptr->resize_denom);
                                             EbPaReferenceObject *reference_object =
                                                 (EbPaReferenceObject *)pcs_ptr->ref_pa_pic_ptr_array[i][j]->object_ptr;
                                             context_ptr->me_context_ptr->me_ds_ref_array[i][j].picture_ptr =
-                                                reference_object->downscaled_input_padded_picture_ptr[denom_idx];
+                                                reference_object->downscaled_input_padded_picture_ptr[sr_denom_idx][resize_denom_idx];
                                             context_ptr->me_context_ptr->me_ds_ref_array[i][j].quarter_picture_ptr =
-                                                reference_object->downscaled_quarter_downsampled_picture_ptr[denom_idx];
+                                                reference_object->downscaled_quarter_downsampled_picture_ptr[sr_denom_idx][resize_denom_idx];
                                             context_ptr->me_context_ptr->me_ds_ref_array[i][j].sixteenth_picture_ptr =
-                                                reference_object->downscaled_sixteenth_downsampled_picture_ptr[denom_idx];
+                                                reference_object->downscaled_sixteenth_downsampled_picture_ptr[sr_denom_idx][resize_denom_idx];
                                             context_ptr->me_context_ptr->me_ds_ref_array[i][j].picture_number =
                                                 reference_object->picture_number;
                                         }
@@ -849,12 +896,12 @@ void *motion_estimation_kernel(void *input_ptr) {
                                 svt_block_on_mutex(pcs_ptr->me_processed_b64_mutex);
                                 pcs_ptr->me_processed_b64_count++;
                                 // We need to finish ME for all SBs to do GM
-                                if (pcs_ptr->me_processed_b64_count == pcs_ptr->sb_total_count) {
+                                if (pcs_ptr->me_processed_b64_count == pcs_ptr->b64_total_count) {
                                     if (pcs_ptr->gm_ctrls.enabled)
                                         global_motion_estimation(pcs_ptr, input_picture_ptr);
                                     else
                                         // Initilize global motion to be OFF when GM is OFF
-                                        memset(pcs_ptr->is_global_motion, EB_FALSE, MAX_NUM_OF_REF_PIC_LIST * REF_LIST_MAX_DEPTH);
+                                        memset(pcs_ptr->is_global_motion, FALSE, MAX_NUM_OF_REF_PIC_LIST * REF_LIST_MAX_DEPTH);
                                 }
 
                                 svt_release_mutex(pcs_ptr->me_processed_b64_mutex);

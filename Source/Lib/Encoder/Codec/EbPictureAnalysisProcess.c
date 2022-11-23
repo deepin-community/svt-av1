@@ -30,6 +30,7 @@
 #include "EbMotionEstimationContext.h"
 #include "EbPictureOperators.h"
 #include "EbResize.h"
+#include "av1me.h"
 
 void generate_padding_compressed_10bit(
     EbByte   src_pic, //output paramter, pointer to the source picture to be padded.
@@ -231,15 +232,13 @@ void calculate_histogram(uint8_t  *input_samples, // input parameter, input samp
                          uint64_t *sum) {
     uint32_t horizontal_index;
     uint32_t vertical_index;
-    *sum = 0;
-
     for (vertical_index = 0; vertical_index < input_area_height; vertical_index += decim_step) {
         for (horizontal_index = 0; horizontal_index < input_area_width;
              horizontal_index += decim_step) {
             ++(histogram[input_samples[horizontal_index]]);
             *sum += input_samples[horizontal_index];
         }
-        input_samples += (stride << (decim_step >> 1));
+        input_samples += (stride * decim_step);
     }
 
     return;
@@ -1926,12 +1925,13 @@ static int32_t apply_denoise_2d(SequenceControlSet *scs_ptr, PictureParentContro
     fg_init_data.stride_y             = pcs_ptr->enhanced_picture_ptr->stride_y;
     fg_init_data.stride_cb            = pcs_ptr->enhanced_picture_ptr->stride_cb;
     fg_init_data.stride_cr            = pcs_ptr->enhanced_picture_ptr->stride_cr;
+    fg_init_data.denoise_apply        = scs_ptr->static_config.film_grain_denoise_apply;
     EB_NEW(denoise_and_model, denoise_and_model_ctor, (EbPtr)&fg_init_data);
 
     if (svt_aom_denoise_and_model_run(denoise_and_model,
                                       inputPicturePointer,
                                       &pcs_ptr->frm_hdr.film_grain_params,
-                                      scs_ptr->static_config.encoder_bit_depth > EB_8BIT)) {}
+                                      scs_ptr->static_config.encoder_bit_depth > EB_EIGHT_BIT)) {}
 
     EB_DELETE(denoise_and_model);
 
@@ -1952,8 +1952,6 @@ EbErrorType denoise_estimate_film_grain(SequenceControlSet      *scs_ptr,
             return 1;
     }
 
-    scs_ptr->seq_header.film_grain_params_present |= frm_hdr->film_grain_params.apply_grain;
-
     return return_error; //todo: add proper error handling
 }
 
@@ -1972,53 +1970,48 @@ void picture_pre_processing_operations(PictureParentControlSet *pcs_ptr,
     return;
 }
 
-/**************************************************************
-* Generate picture histogram bins for YUV pixel intensity *
-* Calculation is done on a region based (Set previously, resolution dependent)
-**************************************************************/
-void sub_sample_luma_generate_pixel_intensity_histogram_bins(
+static void sub_sample_luma_generate_pixel_intensity_histogram_bins(
     SequenceControlSet *scs_ptr, PictureParentControlSet *pcs_ptr,
     EbPictureBufferDesc *input_picture_ptr, uint64_t *sum_avg_intensity_ttl_regions_luma) {
-    uint32_t region_width;
-    uint32_t region_height;
-    uint32_t region_width_offset;
-    uint32_t region_height_offset;
-    uint32_t region_in_picture_width_index;
-    uint32_t region_in_picture_height_index;
-    uint32_t histogram_bin;
-    uint64_t sum;
-
-    region_width = input_picture_ptr->width / scs_ptr->picture_analysis_number_of_regions_per_width;
-    region_height = input_picture_ptr->height /
+    uint32_t region_width = input_picture_ptr->width /
+        scs_ptr->picture_analysis_number_of_regions_per_width;
+    uint32_t region_height = input_picture_ptr->height /
         scs_ptr->picture_analysis_number_of_regions_per_height;
 
     // Loop over regions inside the picture
-    for (region_in_picture_width_index = 0;
+    for (uint32_t region_in_picture_width_index = 0;
          region_in_picture_width_index < scs_ptr->picture_analysis_number_of_regions_per_width;
          region_in_picture_width_index++) { // loop over horizontal regions
-        for (region_in_picture_height_index = 0; region_in_picture_height_index <
+        for (uint32_t region_in_picture_height_index = 0; region_in_picture_height_index <
              scs_ptr->picture_analysis_number_of_regions_per_height;
              region_in_picture_height_index++) { // loop over vertical regions
 
-            // Initialize bins to 1
-            svt_initialize_buffer_32bits(
-                pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                          [region_in_picture_height_index][0],
-                64,
-                0,
-                1);
+            uint64_t sum = 0;
 
-            region_width_offset = (region_in_picture_width_index ==
-                                   scs_ptr->picture_analysis_number_of_regions_per_width - 1)
+            // Initialize bins to 1
+            svt_initialize_buffer_32bits(pcs_ptr->picture_histogram[region_in_picture_width_index]
+                                                                   [region_in_picture_height_index],
+                                         64,
+                                         0,
+                                         1);
+
+            uint32_t region_width_offset = (region_in_picture_width_index ==
+                                            scs_ptr->picture_analysis_number_of_regions_per_width -
+                                                1)
                 ? input_picture_ptr->width -
                     (scs_ptr->picture_analysis_number_of_regions_per_width * region_width)
                 : 0;
 
-            region_height_offset = (region_in_picture_height_index ==
-                                    scs_ptr->picture_analysis_number_of_regions_per_height - 1)
+            uint32_t region_height_offset =
+                (region_in_picture_height_index ==
+                 scs_ptr->picture_analysis_number_of_regions_per_height - 1)
                 ? input_picture_ptr->height -
                     (scs_ptr->picture_analysis_number_of_regions_per_height * region_height)
                 : 0;
+
+            uint8_t decim_step = scs_ptr->static_config.scene_change_detection
+                ? 1
+                : 4; // scs_ptr->vq_ctrls.sharpness_ctrls.scene_transition
 
             // Y Histogram
             calculate_histogram(
@@ -2030,165 +2023,33 @@ void sub_sample_luma_generate_pixel_intensity_histogram_bins(
                 region_width + region_width_offset,
                 region_height + region_height_offset,
                 input_picture_ptr->stride_y,
-                1,
+                decim_step,
                 pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                          [region_in_picture_height_index][0],
+                                          [region_in_picture_height_index],
                 &sum);
+            sum = (sum * decim_step * decim_step);
 
             pcs_ptr->average_intensity_per_region[region_in_picture_width_index]
-                                                 [region_in_picture_height_index][0] =
+                                                 [region_in_picture_height_index] =
                 (uint8_t)((sum +
                            (((region_width + region_width_offset) *
                              (region_height + region_height_offset)) >>
                             1)) /
                           ((region_width + region_width_offset) *
                            (region_height + region_height_offset)));
+
             (*sum_avg_intensity_ttl_regions_luma) += (sum << 4);
-            for (histogram_bin = 0; histogram_bin < HISTOGRAM_NUMBER_OF_BINS;
+            for (uint32_t histogram_bin = 0; histogram_bin < HISTOGRAM_NUMBER_OF_BINS;
                  histogram_bin++) { // Loop over the histogram bins
                 pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                          [region_in_picture_height_index][0][histogram_bin] =
+                                          [region_in_picture_height_index][histogram_bin] =
                     pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                              [region_in_picture_height_index][0][histogram_bin]
-                    << 4;
+                                              [region_in_picture_height_index][histogram_bin] *
+                    4 * 4 * decim_step * decim_step;
             }
         }
     }
 
-    return;
-}
-
-void sub_sample_chroma_generate_pixel_intensity_histogram_bins(
-    SequenceControlSet *scs_ptr, PictureParentControlSet *pcs_ptr,
-    EbPictureBufferDesc *input_picture_ptr, uint64_t *sum_avg_intensity_ttl_regions_cb,
-    uint64_t *sum_avg_intensity_ttl_regions_cr, uint8_t decim_step) {
-    uint64_t sum;
-    uint32_t region_width;
-    uint32_t region_height;
-    uint32_t region_width_offset;
-    uint32_t region_height_offset;
-    uint32_t region_in_picture_width_index;
-    uint32_t region_in_picture_height_index;
-
-    uint16_t histogram_bin;
-
-    region_width = input_picture_ptr->width / scs_ptr->picture_analysis_number_of_regions_per_width;
-    region_height = input_picture_ptr->height /
-        scs_ptr->picture_analysis_number_of_regions_per_height;
-
-    // Loop over regions inside the picture
-    for (region_in_picture_width_index = 0;
-         region_in_picture_width_index < scs_ptr->picture_analysis_number_of_regions_per_width;
-         region_in_picture_width_index++) { // loop over horizontal regions
-        for (region_in_picture_height_index = 0; region_in_picture_height_index <
-             scs_ptr->picture_analysis_number_of_regions_per_height;
-             region_in_picture_height_index++) { // loop over vertical regions
-            if (scs_ptr->static_config.scene_change_detection ||
-                scs_ptr->vq_ctrls.sharpness_ctrls.scene_transition) {
-                // Initialize bins to 1
-                svt_initialize_buffer_32bits(
-                    pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                              [region_in_picture_height_index][1],
-                    64,
-                    0,
-                    1);
-                svt_initialize_buffer_32bits(
-                    pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                              [region_in_picture_height_index][2],
-                    64,
-                    0,
-                    1);
-            }
-
-            region_width_offset = (region_in_picture_width_index ==
-                                   scs_ptr->picture_analysis_number_of_regions_per_width - 1)
-                ? input_picture_ptr->width -
-                    (scs_ptr->picture_analysis_number_of_regions_per_width * region_width)
-                : 0;
-
-            region_height_offset = (region_in_picture_height_index ==
-                                    scs_ptr->picture_analysis_number_of_regions_per_height - 1)
-                ? input_picture_ptr->height -
-                    (scs_ptr->picture_analysis_number_of_regions_per_height * region_height)
-                : 0;
-
-            // U Histogram
-            calculate_histogram(
-                &input_picture_ptr->buffer_cb[((input_picture_ptr->origin_x +
-                                                region_in_picture_width_index * region_width) >>
-                                               1) +
-                                              (((input_picture_ptr->origin_y +
-                                                 region_in_picture_height_index * region_height) >>
-                                                1) *
-                                               input_picture_ptr->stride_cb)],
-                (region_width + region_width_offset) >> 1,
-                (region_height + region_height_offset) >> 1,
-                input_picture_ptr->stride_cb,
-                decim_step,
-                pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                          [region_in_picture_height_index][1],
-                &sum);
-
-            sum = (sum << decim_step);
-            *sum_avg_intensity_ttl_regions_cb += sum;
-            pcs_ptr->average_intensity_per_region[region_in_picture_width_index]
-                                                 [region_in_picture_height_index][1] =
-                (uint8_t)((sum +
-                           (((region_width + region_width_offset) *
-                             (region_height + region_height_offset)) >>
-                            3)) /
-                          (((region_width + region_width_offset) *
-                            (region_height + region_height_offset)) >>
-                           2));
-
-            for (histogram_bin = 0; histogram_bin < HISTOGRAM_NUMBER_OF_BINS;
-                 histogram_bin++) { // Loop over the histogram bins
-                pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                          [region_in_picture_height_index][1][histogram_bin] =
-                    pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                              [region_in_picture_height_index][1][histogram_bin]
-                    << decim_step;
-            }
-
-            // V Histogram
-            calculate_histogram(
-                &input_picture_ptr->buffer_cr[((input_picture_ptr->origin_x +
-                                                region_in_picture_width_index * region_width) >>
-                                               1) +
-                                              (((input_picture_ptr->origin_y +
-                                                 region_in_picture_height_index * region_height) >>
-                                                1) *
-                                               input_picture_ptr->stride_cr)],
-                (region_width + region_width_offset) >> 1,
-                (region_height + region_height_offset) >> 1,
-                input_picture_ptr->stride_cr,
-                decim_step,
-                pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                          [region_in_picture_height_index][2],
-                &sum);
-
-            sum = (sum << decim_step);
-            *sum_avg_intensity_ttl_regions_cr += sum;
-            pcs_ptr->average_intensity_per_region[region_in_picture_width_index]
-                                                 [region_in_picture_height_index][2] =
-                (uint8_t)((sum +
-                           (((region_width + region_width_offset) *
-                             (region_height + region_height_offset)) >>
-                            3)) /
-                          (((region_width + region_width_offset) *
-                            (region_height + region_height_offset)) >>
-                           2));
-
-            for (histogram_bin = 0; histogram_bin < HISTOGRAM_NUMBER_OF_BINS;
-                 histogram_bin++) { // Loop over the histogram bins
-                pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                          [region_in_picture_height_index][2][histogram_bin] =
-                    pcs_ptr->picture_histogram[region_in_picture_width_index]
-                                              [region_in_picture_height_index][2][histogram_bin]
-                    << decim_step;
-            }
-        }
-    }
     return;
 }
 /************************************************
@@ -2199,26 +2060,26 @@ void sub_sample_chroma_generate_pixel_intensity_histogram_bins(
  ************************************************/
 void compute_picture_spatial_statistics(SequenceControlSet      *scs_ptr,
                                         PictureParentControlSet *pcs_ptr,
-                                        EbPictureBufferDesc     *input_padded_picture_ptr,
-                                        uint32_t                 sb_total_count) {
+                                        EbPictureBufferDesc     *input_padded_picture_ptr) {
     // Variance
     uint64_t pic_tot_variance = 0;
+    uint16_t b64_total_count  = pcs_ptr->b64_total_count;
 
-    for (uint16_t sb_index = 0; sb_index < pcs_ptr->sb_total_count; ++sb_index) {
-        SbParams *sb_params = &pcs_ptr->sb_params_array[sb_index];
+    for (uint16_t b64_idx = 0; b64_idx < b64_total_count; ++b64_idx) {
+        B64Geom *b64_geom = &pcs_ptr->b64_geom[b64_idx];
 
-        uint16_t sb_origin_x             = sb_params->origin_x; // to avoid using child PCS
-        uint16_t sb_origin_y             = sb_params->origin_y;
-        uint32_t input_luma_origin_index = (input_padded_picture_ptr->origin_y + sb_origin_y) *
+        uint16_t b64_origin_x            = b64_geom->origin_x; // to avoid using child PCS
+        uint16_t b64_origin_y            = b64_geom->origin_y;
+        uint32_t input_luma_origin_index = (input_padded_picture_ptr->origin_y + b64_origin_y) *
                 input_padded_picture_ptr->stride_y +
-            input_padded_picture_ptr->origin_x + sb_origin_x;
+            input_padded_picture_ptr->origin_x + b64_origin_x;
 
         compute_block_mean_compute_variance(
-            scs_ptr, pcs_ptr, input_padded_picture_ptr, sb_index, input_luma_origin_index);
-        pic_tot_variance += (pcs_ptr->variance[sb_index][RASTER_SCAN_CU_INDEX_64x64]);
+            scs_ptr, pcs_ptr, input_padded_picture_ptr, b64_idx, input_luma_origin_index);
+        pic_tot_variance += (pcs_ptr->variance[b64_idx][RASTER_SCAN_CU_INDEX_64x64]);
     }
 
-    pcs_ptr->pic_avg_variance = (uint16_t)(pic_tot_variance / sb_total_count);
+    pcs_ptr->pic_avg_variance = (uint16_t)(pic_tot_variance / b64_total_count);
 
     return;
 }
@@ -2229,14 +2090,9 @@ void compute_picture_spatial_statistics(SequenceControlSet      *scs_ptr,
  ** Computing Picture Variance
  ************************************************/
 void gathering_picture_statistics(SequenceControlSet *scs_ptr, PictureParentControlSet *pcs_ptr,
-                                  EbPictureBufferDesc *input_picture_ptr,
                                   EbPictureBufferDesc *input_padded_picture_ptr,
-                                  EbPictureBufferDesc *sixteenth_decimated_picture_ptr,
-                                  uint32_t             sb_total_count) {
+                                  EbPictureBufferDesc *sixteenth_decimated_picture_ptr) {
     uint64_t sum_avg_intensity_ttl_regions_luma = 0;
-    uint64_t sum_avg_intensity_ttl_regions_cb   = 0;
-    uint64_t sum_avg_intensity_ttl_regions_cr   = 0;
-
     // Histogram bins
     if (scs_ptr->static_config.scene_change_detection ||
         scs_ptr->vq_ctrls.sharpness_ctrls.scene_transition) {
@@ -2244,20 +2100,10 @@ void gathering_picture_statistics(SequenceControlSet *scs_ptr, PictureParentCont
         // 1/16 input ready
         sub_sample_luma_generate_pixel_intensity_histogram_bins(
             scs_ptr, pcs_ptr, sixteenth_decimated_picture_ptr, &sum_avg_intensity_ttl_regions_luma);
-
-        // Use 1/4 Chroma for Histogram generation
-        // 1/4 input not ready => perform operation on the fly
-        sub_sample_chroma_generate_pixel_intensity_histogram_bins(scs_ptr,
-                                                                  pcs_ptr,
-                                                                  input_picture_ptr,
-                                                                  &sum_avg_intensity_ttl_regions_cb,
-                                                                  &sum_avg_intensity_ttl_regions_cr,
-                                                                  4);
     }
 
     if (scs_ptr->calculate_variance)
-        compute_picture_spatial_statistics(
-            scs_ptr, pcs_ptr, input_padded_picture_ptr, sb_total_count);
+        compute_picture_spatial_statistics(scs_ptr, pcs_ptr, input_padded_picture_ptr);
     else
         pcs_ptr->pic_avg_variance = 0;
 
@@ -2346,7 +2192,7 @@ void pad_2b_compressed_input_picture(uint8_t *src_pic, uint32_t src_stride,
  ************************************************/
 void pad_picture_to_multiple_of_min_blk_size_dimensions(SequenceControlSet  *scs_ptr,
                                                         EbPictureBufferDesc *input_picture_ptr) {
-    EbBool is16_bit_input = (EbBool)(scs_ptr->static_config.encoder_bit_depth > EB_8BIT);
+    Bool is16_bit_input = (Bool)(scs_ptr->static_config.encoder_bit_depth > EB_EIGHT_BIT);
 
     uint32_t       color_format  = input_picture_ptr->color_format;
     const uint16_t subsampling_x = (color_format == EB_YUV444 ? 1 : 2) - 1;
@@ -2368,8 +2214,8 @@ void pad_picture_to_multiple_of_min_blk_size_dimensions(SequenceControlSet  *scs
                                           ((input_picture_ptr->origin_y >> subsampling_y) *
                                            input_picture_ptr->stride_cb)],
             input_picture_ptr->stride_cb,
-            (input_picture_ptr->width - scs_ptr->pad_right) >> subsampling_x,
-            (input_picture_ptr->height - scs_ptr->pad_bottom) >> subsampling_y,
+            (input_picture_ptr->width + subsampling_x - scs_ptr->pad_right) >> subsampling_x,
+            (input_picture_ptr->height + subsampling_y - scs_ptr->pad_bottom) >> subsampling_y,
             scs_ptr->pad_right >> subsampling_x,
             scs_ptr->pad_bottom >> subsampling_y);
 
@@ -2379,8 +2225,8 @@ void pad_picture_to_multiple_of_min_blk_size_dimensions(SequenceControlSet  *scs
                                           ((input_picture_ptr->origin_y >> subsampling_y) *
                                            input_picture_ptr->stride_cb)],
             input_picture_ptr->stride_cr,
-            (input_picture_ptr->width - scs_ptr->pad_right) >> subsampling_x,
-            (input_picture_ptr->height - scs_ptr->pad_bottom) >> subsampling_y,
+            (input_picture_ptr->width + subsampling_x - scs_ptr->pad_right) >> subsampling_x,
+            (input_picture_ptr->height + subsampling_y - scs_ptr->pad_bottom) >> subsampling_y,
             scs_ptr->pad_right >> subsampling_x,
             scs_ptr->pad_bottom >> subsampling_y);
 
@@ -2406,8 +2252,8 @@ void pad_picture_to_multiple_of_min_blk_size_dimensions(SequenceControlSet  *scs
             pad_2b_compressed_input_picture(
                 &input_picture_ptr->buffer_bit_inc_cb[comp_chroma_buffer_offset],
                 comp_stride_uv,
-                (input_picture_ptr->width - scs_ptr->pad_right) >> subsampling_x,
-                (input_picture_ptr->height - scs_ptr->pad_bottom) >> subsampling_y,
+                (input_picture_ptr->width + subsampling_x - scs_ptr->pad_right) >> subsampling_x,
+                (input_picture_ptr->height + subsampling_y - scs_ptr->pad_bottom) >> subsampling_y,
                 scs_ptr->pad_right >> subsampling_x,
                 scs_ptr->pad_bottom >> subsampling_y);
 
@@ -2415,8 +2261,8 @@ void pad_picture_to_multiple_of_min_blk_size_dimensions(SequenceControlSet  *scs
             pad_2b_compressed_input_picture(
                 &input_picture_ptr->buffer_bit_inc_cr[comp_chroma_buffer_offset],
                 comp_stride_uv,
-                (input_picture_ptr->width - scs_ptr->pad_right) >> subsampling_x,
-                (input_picture_ptr->height - scs_ptr->pad_bottom) >> subsampling_y,
+                (input_picture_ptr->width + subsampling_x - scs_ptr->pad_right) >> subsampling_x,
+                (input_picture_ptr->height + subsampling_y - scs_ptr->pad_bottom) >> subsampling_y,
                 scs_ptr->pad_right >> subsampling_x,
                 scs_ptr->pad_bottom >> subsampling_y);
     }
@@ -2431,7 +2277,7 @@ void pad_picture_to_multiple_of_min_blk_size_dimensions(SequenceControlSet  *scs
  ************************************************/
 void pad_picture_to_multiple_of_min_blk_size_dimensions_16bit(
     SequenceControlSet *scs_ptr, EbPictureBufferDesc *input_picture_ptr) {
-    assert(scs_ptr->static_config.encoder_bit_depth > EB_8BIT);
+    assert(scs_ptr->static_config.encoder_bit_depth > EB_EIGHT_BIT);
 
     uint32_t       color_format  = input_picture_ptr->color_format;
     const uint16_t subsampling_x = (color_format == EB_YUV444 ? 1 : 2) - 1;
@@ -2580,7 +2426,6 @@ int svt_av1_count_colors(const uint8_t *src, int stride, int rows, int cols, int
             ++n;
     return n;
 }
-extern AomVarianceFnPtr mefn_ptr[BlockSizeS_ALL];
 
 // This is used as a reference when computing the source variance for the
 //  purposes of activity masking.
@@ -2595,11 +2440,9 @@ const uint8_t eb_av1_var_offs[MAX_SB_SIZE] = {
     128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128,
     128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128};
 
-unsigned int svt_av1_get_sby_perpixel_variance(
-    const AomVarianceFnPtr *fn_ptr, //const AV1_COMP *cpi,
-    const uint8_t          *src,
-    int                     stride, //const struct Buf2D *ref,
-    BlockSize               bs) {
+unsigned int svt_av1_get_sby_perpixel_variance(const AomVarianceFnPtr *fn_ptr, const uint8_t *src,
+                                               int       stride, //const struct Buf2D *ref,
+                                               BlockSize bs) {
     unsigned int       sse;
     const unsigned int var =
         //cpi->fn_ptr[bs].vf(ref->buf, ref->stride, eb_av1_var_offs, 0, &sse);
@@ -2609,9 +2452,9 @@ unsigned int svt_av1_get_sby_perpixel_variance(
 
 // Check if the number of color of a block is superior to 1 and inferior
 // to a given threshold.
-EbBool is_valid_palette_nb_colors(const uint8_t *src, int stride, int rows, int cols,
-                                  int nb_colors_threshold) {
-    EbBool has_color[1 << 8]; // Maximum (1 << 8) color levels.
+Bool is_valid_palette_nb_colors(const uint8_t *src, int stride, int rows, int cols,
+                                int nb_colors_threshold) {
+    Bool has_color[1 << 8]; // Maximum (1 << 8) color levels.
     memset(has_color, 0, (1 << 8) * sizeof(*has_color));
     int nb_colors = 0;
 
@@ -2622,14 +2465,14 @@ EbBool is_valid_palette_nb_colors(const uint8_t *src, int stride, int rows, int 
                 has_color[this_val] = 1;
                 nb_colors++;
                 if (nb_colors > nb_colors_threshold)
-                    return EB_FALSE;
+                    return FALSE;
             }
         }
     }
     if (nb_colors <= 1)
-        return EB_FALSE;
+        return FALSE;
 
-    return EB_TRUE;
+    return TRUE;
 }
 
 // Estimate if the source frame is screen content, based on the portion of
@@ -2766,7 +2609,7 @@ void pad_input_pictures(SequenceControlSet *scs_ptr, EbPictureBufferDesc *input_
     uint32_t comp_stride_y  = input_picture_ptr->stride_y / 4;
     uint32_t comp_stride_uv = input_picture_ptr->stride_cb / 4;
 
-    if (scs_ptr->static_config.encoder_bit_depth > EB_8BIT)
+    if (scs_ptr->static_config.encoder_bit_depth > EB_EIGHT_BIT)
         if (input_picture_ptr->buffer_bit_inc_y)
             generate_padding_compressed_10bit(input_picture_ptr->buffer_bit_inc_y,
                                               comp_stride_y,
@@ -2792,7 +2635,7 @@ void pad_input_pictures(SequenceControlSet *scs_ptr, EbPictureBufferDesc *input_
                          input_picture_ptr->origin_y >> scs_ptr->subsampling_y);
 
     // PAD the bit inc buffer in 10bit
-    if (scs_ptr->static_config.encoder_bit_depth > EB_8BIT) {
+    if (scs_ptr->static_config.encoder_bit_depth > EB_EIGHT_BIT) {
         if (input_picture_ptr->buffer_bit_inc_cb)
             generate_padding_compressed_10bit(
                 input_picture_ptr->buffer_bit_inc_cb,
@@ -2857,7 +2700,7 @@ void *picture_analysis_kernel(void *input_ptr) {
 
         in_results_ptr = (ResourceCoordinationResults *)in_results_wrapper_ptr->object_ptr;
         pcs_ptr        = (PictureParentControlSet *)in_results_ptr->pcs_wrapper_ptr->object_ptr;
-        scs_ptr        = (SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr;
+        scs_ptr        = pcs_ptr->scs_ptr;
 
         // Mariana : save enhanced picture ptr, move this from here
         pcs_ptr->enhanced_unscaled_picture_ptr                    = pcs_ptr->enhanced_picture_ptr;
@@ -2931,10 +2774,8 @@ void *picture_analysis_kernel(void *input_ptr) {
                 gathering_picture_statistics(
                     scs_ptr,
                     pcs_ptr,
-                    pcs_ptr->chroma_downsampled_picture_ptr, //420 input_picture_ptr
                     input_padded_picture_ptr,
-                    (EbPictureBufferDesc *)pa_ref_obj_->sixteenth_downsampled_picture_ptr,
-                    pcs_ptr->sb_total_count);
+                    (EbPictureBufferDesc *)pa_ref_obj_->sixteenth_downsampled_picture_ptr);
 
             // If running multi-threaded mode, perform SC detection in picture_analysis_kernel, else in picture_decision_kernel
             if (scs_ptr->static_config.logical_processors != 1) {

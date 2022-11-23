@@ -50,7 +50,7 @@
 #ifdef _WIN32
 uint8_t        num_groups = 0;
 GROUP_AFFINITY group_affinity;
-EbBool         alternate_groups = 0;
+Bool           alternate_groups = 0;
 #elif defined(__linux__)
 cpu_set_t group_affinity;
 #endif
@@ -108,7 +108,7 @@ static EbErrorType svt_dec_handle_ctor(EbDecHandle    **decHandleDblPtr,
     svt_dec_memory_map_index = &dec_handle_ptr->memory_map_index;
     svt_dec_lib_malloc_count = 0;
 
-    dec_handle_ptr->start_thread_process = EB_FALSE;
+    dec_handle_ptr->start_thread_process = FALSE;
     memory_map_start_address             = NULL;
     memory_map_end_address               = NULL;
 
@@ -229,7 +229,7 @@ int svt_dec_out_buf(EbDecHandle *dec_handle_ptr, EbBufferHeaderType *p_buffer) {
     default: assert(0);
     }
 
-    int32_t use_high_bit_depth = recon_picture_buf->bit_depth == EB_8BIT ? 0 : 1;
+    int32_t use_high_bit_depth = recon_picture_buf->bit_depth == EB_EIGHT_BIT ? 0 : 1;
 
     luma = out_img->luma +
         ((out_img->origin_y * out_img->y_stride + out_img->origin_x) << use_high_bit_depth);
@@ -246,7 +246,7 @@ int svt_dec_out_buf(EbDecHandle *dec_handle_ptr, EbBufferHeaderType *p_buffer) {
 
     /* Memcpy to dst buffer */
     {
-        if (recon_picture_buf->bit_depth == EB_8BIT) {
+        if (recon_picture_buf->bit_depth == EB_EIGHT_BIT) {
             if (dec_handle_ptr->is_16bit_pipeline) {
                 uint8_t  *dst;
                 uint16_t *pu2_src;
@@ -374,8 +374,8 @@ int svt_dec_out_buf(EbDecHandle *dec_handle_ptr, EbBufferHeaderType *p_buffer) {
         AomFilmGrain *film_grain_ptr = &dec_handle_ptr->cur_pic_buf[0]->film_grain_params;
         if (film_grain_ptr->apply_grain) {
             switch (recon_picture_buf->bit_depth) {
-            case EB_8BIT: film_grain_ptr->bit_depth = 8; break;
-            case EB_10BIT: film_grain_ptr->bit_depth = 10; break;
+            case EB_EIGHT_BIT: film_grain_ptr->bit_depth = 8; break;
+            case EB_TEN_BIT: film_grain_ptr->bit_depth = 10; break;
             default: assert(0);
             }
             copy_even(luma, wd, ht, out_img->y_stride, use_high_bit_depth);
@@ -523,9 +523,9 @@ EB_API EbErrorType svt_av1_dec_init(EbComponentType *svt_dec_component) {
 
     EbDecHandle *dec_handle_ptr = (EbDecHandle *)svt_dec_component->p_component_private;
 #ifdef ARCH_X86_64
-    CPU_FLAGS cpu_flags = get_cpu_flags_to_use();
+    EbCpuFlags cpu_flags = get_cpu_flags_to_use();
 #else
-    CPU_FLAGS cpu_flags = 0;
+    EbCpuFlags cpu_flags = 0;
 #endif
     dec_handle_ptr->dec_cnt       = -1;
     dec_handle_ptr->num_frms_prll = 1;

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <sys/stat.h>
 
 #include "EbSvtAv1Metadata.h"
@@ -25,6 +26,8 @@
 #include <unistd.h>
 #include <sys/file.h>
 #endif
+
+#include "EbAppOutputivf.h"
 
 #if !defined(_WIN32) || !defined(HAVE_STRNLEN_S)
 #include "third_party/safestringlib/safe_str_lib.h"
@@ -58,12 +61,18 @@
 #define PROGRESS_TOKEN "--progress"
 #define QP_TOKEN "-q"
 #define USE_QP_FILE_TOKEN "--use-q-file"
+#define FORCE_KEY_FRAMES_TOKEN "--force-key-frames"
 
 #define USE_FIXED_QINDEX_OFFSETS_TOKEN "--use-fixed-qindex-offsets"
 #define QINDEX_OFFSETS_TOKEN "--qindex-offsets"
 #define KEY_FRAME_QINDEX_OFFSET_TOKEN "--key-frame-qindex-offset"
 #define KEY_FRAME_CHROMA_QINDEX_OFFSET_TOKEN "--key-frame-chroma-qindex-offset"
 #define CHROMA_QINDEX_OFFSETS_TOKEN "--chroma-qindex-offsets"
+#define LUMA_Y_DC_QINDEX_OFFSET_TOKEN "--luma-y-dc-qindex-offset"
+#define CHROMA_U_DC_QINDEX_OFFSET_TOKEN "--chroma-u-dc-qindex-offset"
+#define CHROMA_U_AC_QINDEX_OFFSET_TOKEN "--chroma-u-ac-qindex-offset"
+#define CHROMA_V_DC_QINDEX_OFFSET_TOKEN "--chroma-v-dc-qindex-offset"
+#define CHROMA_V_AC_QINDEX_OFFSET_TOKEN "--chroma-v-ac-qindex-offset"
 
 #define FRAME_RATE_TOKEN "--fps"
 #define FRAME_RATE_NUMERATOR_TOKEN "--fps-num"
@@ -77,6 +86,7 @@
 #define TIER_TOKEN "--tier"
 #define LEVEL_TOKEN "--level"
 #define FILM_GRAIN_TOKEN "--film-grain"
+#define FILM_GRAIN_DENOISE_APPLY_TOKEN "--film-grain-denoise"
 #define INTRA_REFRESH_TYPE_TOKEN "--irefresh-type" // no Eval
 #define CDEF_ENABLE_TOKEN "--enable-cdef"
 #define SCREEN_CONTENT_TOKEN "--scm"
@@ -92,17 +102,23 @@
 #define SUPERRES_QTHRES "--superres-qthres"
 #define SUPERRES_KF_QTHRES "--superres-kf-qthres"
 // --- end: SUPER-RESOLUTION SUPPORT
+// --- start: REFERENCE SCALING SUPPORT
+#define RESIZE_MODE_INPUT "--resize-mode"
+#define RESIZE_DENOM "--resize-denom"
+#define RESIZE_KF_DENOM "--resize-kf-denom"
+// --- end: REFERENCE SCALING SUPPORT
 #define RATE_CONTROL_ENABLE_TOKEN "--rc"
 #define TARGET_BIT_RATE_TOKEN "--tbr"
 #define MAX_BIT_RATE_TOKEN "--mbr"
 #define MAX_QP_TOKEN "--max-qp"
-#define VBV_BUFSIZE_TOKEN "--vbv-bufsize"
 #define MIN_QP_TOKEN "--min-qp"
 #define VBR_BIAS_PCT_TOKEN "--bias-pct"
 #define VBR_MIN_SECTION_PCT_TOKEN "--minsection-pct"
 #define VBR_MAX_SECTION_PCT_TOKEN "--maxsection-pct"
 #define UNDER_SHOOT_PCT_TOKEN "--undershoot-pct"
 #define OVER_SHOOT_PCT_TOKEN "--overshoot-pct"
+#define MBR_OVER_SHOOT_PCT_TOKEN "--mbr-overshoot-pct"
+#define GOP_CONSTRAINT_RC_TOKEN "--gop-constraint-rc"
 #define BUFFER_SIZE_TOKEN "--buf-sz"
 #define BUFFER_INITIAL_SIZE_TOKEN "--buf-initial-sz"
 #define BUFFER_OPTIMAL_SIZE_TOKEN "--buf-optimal-sz"
@@ -158,56 +174,49 @@
 #define QP_LONG_TOKEN "--qp"
 #define CRF_LONG_TOKEN "--crf"
 #define LOOP_FILTER_ENABLE "--enable-dlf"
+#define FORCED_MAX_FRAME_WIDTH_TOKEN "--forced-max-frame-width"
+#define FORCED_MAX_FRAME_HEIGHT_TOKEN "--forced-max-frame-height"
 
 #define COLOR_PRIMARIES_NEW_TOKEN "--color-primaries"
 #define TRANSFER_CHARACTERISTICS_NEW_TOKEN "--transfer-characteristics"
 #define MATRIX_COEFFICIENTS_NEW_TOKEN "--matrix-coefficients"
 #define COLOR_RANGE_NEW_TOKEN "--color-range"
+#define CHROMA_SAMPLE_POSITION_TOKEN "--chroma-sample-position"
 #define MASTERING_DISPLAY_TOKEN "--mastering-display"
 #define CONTENT_LIGHT_LEVEL_TOKEN "--content-light"
 
-#define ENC_MRS -2 // Highest quality research mode (slowest)
-#define ENC_MR -1 //Research mode with higher quality than M0
-#define ENC_M0 0
-#define ENC_M1 1
-#define ENC_M2 2
-#define ENC_M3 3
-#define ENC_M4 4
-#define ENC_M5 5
-#define ENC_M6 6
-#define ENC_M7 7
-#define ENC_M8 8
-#define ENC_M9 9
-#define ENC_M10 10
-#define ENC_M11 11
-#define ENC_M12 12
-#define ENC_M13 13
+#define SFRAME_DIST_TOKEN "--sframe-dist"
+#define SFRAME_MODE_TOKEN "--sframe-mode"
+
+#define ENABLE_QM_TOKEN "--enable-qm"
+#define MIN_QM_LEVEL_TOKEN "--qm-min"
+#define MAX_QM_LEVEL_TOKEN "--qm-max"
 #ifdef _WIN32
 static HANDLE get_file_handle(FILE *fp) { return (HANDLE)_get_osfhandle(_fileno(fp)); }
 #endif
 
-static EbBool fopen_and_lock(FILE **file, const char *name, EbBool write) {
+static Bool fopen_and_lock(FILE **file, const char *name, Bool write) {
     if (!file || !name)
-        return EB_FALSE;
+        return FALSE;
 
     const char *mode = write ? "wb" : "rb";
     FOPEN(*file, name, mode);
     if (!*file)
-        return EB_FALSE;
+        return FALSE;
 
 #ifdef _WIN32
     HANDLE handle = get_file_handle(*file);
     if (handle == INVALID_HANDLE_VALUE)
-        return EB_FALSE;
+        return FALSE;
     if (LockFile(handle, 0, 0, MAXDWORD, MAXDWORD))
-        return EB_TRUE;
+        return TRUE;
 #else
     int fd = fileno(*file);
     if (flock(fd, LOCK_EX | LOCK_NB) == 0)
-        return EB_TRUE;
+        return TRUE;
 #endif
     fprintf(stderr, "ERROR: locking %s failed, is it used by other encoder?\n", name);
-    return EB_FALSE;
+    return FALSE;
 }
 
 /**********************************
@@ -224,7 +233,7 @@ static void set_cfg_input_file(const char *filename, EbConfig *cfg) {
 
     if (!strcmp(filename, "stdin")) {
         cfg->input_file         = stdin;
-        cfg->input_file_is_fifo = EB_TRUE;
+        cfg->input_file_is_fifo = TRUE;
     } else
         FOPEN(cfg->input_file, filename, "rb");
 
@@ -256,7 +265,7 @@ static void set_pred_struct_file(const char *value, EbConfig *cfg) {
 #else
     cfg->input_pred_struct_filename = _strdup(value);
 #endif
-    cfg->config.enable_manual_pred_struct = EB_TRUE;
+    cfg->config.enable_manual_pred_struct = TRUE;
 }
 
 static void set_cfg_stream_file(const char *value, EbConfig *cfg) {
@@ -320,12 +329,59 @@ static void set_cfg_source_width(const char *value, EbConfig *cfg) {
 static void set_cfg_source_height(const char *value, EbConfig *cfg) {
     cfg->config.source_height = strtoul(value, NULL, 0);
 };
+static void set_cfg_forced_max_frame_width(const char *value, EbConfig *cfg) {
+    cfg->config.forced_max_frame_width = strtoul(value, NULL, 0);
+}
+static void set_cfg_forced_max_frame_height(const char *value, EbConfig *cfg) {
+    cfg->config.forced_max_frame_height = strtoul(value, NULL, 0);
+}
 static void set_cfg_frames_to_be_encoded(const char *value, EbConfig *cfg) {
     cfg->frames_to_be_encoded = strtol(value, NULL, 0);
 };
 static void set_buffered_input(const char *value, EbConfig *cfg) {
     cfg->buffered_input = strtol(value, NULL, 0);
 };
+static void set_cfg_force_key_frames(const char *value, EbConfig *cfg) {
+    struct forced_key_frames fkf;
+    fkf.specifiers = NULL;
+    fkf.frames     = NULL;
+    fkf.count      = 0;
+
+    if (!value)
+        return;
+    const char *p = value;
+    while (p) {
+        const size_t len       = strcspn(p, ",");
+        char        *specifier = (char *)calloc(sizeof(*specifier), len + 1);
+        if (!specifier)
+            goto err;
+        memcpy(specifier, p, len);
+        char **tmp = (char **)realloc(fkf.specifiers, sizeof(*fkf.specifiers) * (fkf.count + 1));
+        if (!tmp) {
+            free(specifier);
+            goto err;
+        }
+        fkf.specifiers            = tmp;
+        fkf.specifiers[fkf.count] = specifier;
+        fkf.count++;
+        if ((p = strchr(p, ',')))
+            ++p;
+    }
+
+    if (!fkf.count)
+        goto err;
+
+    fkf.frames = (uint64_t *)calloc(sizeof(*fkf.frames), fkf.count);
+    if (!fkf.frames)
+        goto err;
+    cfg->forced_keyframes        = fkf;
+    cfg->config.force_key_frames = true;
+    return;
+err:
+    fputs("Error parsing forced key frames list\n", stderr);
+    for (size_t i = 0; i < fkf.count; ++i) free(fkf.specifiers[i]);
+    free(fkf.specifiers);
+}
 static void set_no_progress(const char *value, EbConfig *cfg) {
     switch (value ? *value : '1') {
     case '0': cfg->progress = 1; break; // equal to --progress 1
@@ -340,15 +396,8 @@ static void set_progress(const char *value, EbConfig *cfg) {
     }
 }
 static void set_frame_rate(const char *value, EbConfig *cfg) {
-    cfg->config.frame_rate = strtoul(value, NULL, 0);
-    if (cfg->config.frame_rate <= 1000) {
-        cfg->config.frame_rate_numerator   = cfg->config.frame_rate * 1000;
-        cfg->config.frame_rate_denominator = 1000;
-        cfg->config.frame_rate <<= 16;
-    } else {
-        cfg->config.frame_rate_numerator   = (cfg->config.frame_rate >> 16) * 1000;
-        cfg->config.frame_rate_denominator = 1000;
-    }
+    cfg->config.frame_rate_numerator   = strtoul(value, NULL, 0);
+    cfg->config.frame_rate_denominator = 1;
 }
 
 static void set_frame_rate_numerator(const char *value, EbConfig *cfg) {
@@ -369,7 +418,15 @@ static void set_compressed_ten_bit_format(const char *value, EbConfig *cfg) {
 static void set_enc_mode(const char *value, EbConfig *cfg) {
     cfg->config.enc_mode = (uint8_t)strtoul(value, NULL, 0);
 };
-
+static void set_enable_qm(const char *value, EbConfig *cfg) {
+    cfg->config.enable_qm = !!strtoul(value, NULL, 0);
+};
+static void set_min_qm_level(const char *value, EbConfig *cfg) {
+    cfg->config.min_qm_level = (uint8_t)strtoul(value, NULL, 0);
+};
+static void set_max_qm_level(const char *value, EbConfig *cfg) {
+    cfg->config.max_qm_level = (uint8_t)strtoul(value, NULL, 0);
+};
 /**
  * @brief split colon separated string into key=value pairs
  *
@@ -433,10 +490,8 @@ static void parse_svtav1_params(const char *value, EbConfig *cfg) {
 static void set_cfg_intra_period(const char *value, EbConfig *cfg) {
     cfg->config.intra_period_length = strtol(value, NULL, 0);
 };
-// --keyint 0 == --keyint -1
 static void set_keyint(const char *value, EbConfig *cfg) {
-    const long keyint               = strtol(value, NULL, 0);
-    cfg->config.intra_period_length = keyint < 0 ? keyint : keyint - 1;
+    svt_av1_enc_parse_parameter(&cfg->config, "keyint", value);
 }
 static void set_cfg_intra_refresh_type(const char *value, EbConfig *cfg) {
     switch (strtol(value, NULL, 0)) {
@@ -457,16 +512,16 @@ static void set_cfg_qp(const char *value, EbConfig *cfg) {
     cfg->config.qp = strtoul(value, NULL, 0);
 };
 static void set_cfg_crf(const char *value, EbConfig *cfg) {
-    cfg->config.qp                = strtoul(value, NULL, 0);
-    cfg->config.rate_control_mode = 0;
-    cfg->config.enable_tpl_la     = 1;
+    cfg->config.qp                           = strtoul(value, NULL, 0);
+    cfg->config.rate_control_mode            = SVT_AV1_RC_MODE_CQP_OR_CRF;
+    cfg->config.enable_adaptive_quantization = 2;
 }
 static void set_cfg_use_qp_file(const char *value, EbConfig *cfg) {
-    cfg->config.use_qp_file = (EbBool)strtol(value, NULL, 0);
+    cfg->config.use_qp_file = (Bool)strtol(value, NULL, 0);
 };
 
 static void set_cfg_use_fixed_qindex_offsets(const char *value, EbConfig *cfg) {
-    cfg->config.use_fixed_qindex_offsets = (EbBool)strtol(value, NULL, 0);
+    cfg->config.use_fixed_qindex_offsets = (uint8_t)strtol(value, NULL, 0);
 }
 
 static void set_cfg_key_frame_qindex_offset(const char *value, EbConfig *cfg) {
@@ -477,11 +532,32 @@ static void set_cfg_key_frame_chroma_qindex_offset(const char *value, EbConfig *
     cfg->config.key_frame_chroma_qindex_offset = (int32_t)strtol(value, NULL, 0);
 }
 
+static void set_cfg_luma_y_dc_qindex_offset(const char *value, EbConfig *cfg) {
+    cfg->config.luma_y_dc_qindex_offset = (int32_t)strtol(value, NULL, 0);
+}
+
+static void set_cfg_chroma_u_dc_qindex_offset(const char *value, EbConfig *cfg) {
+    cfg->config.chroma_u_dc_qindex_offset = (int32_t)strtol(value, NULL, 0);
+}
+
+static void set_cfg_chroma_u_ac_qindex_offset(const char *value, EbConfig *cfg) {
+    cfg->config.chroma_u_ac_qindex_offset = (int32_t)strtol(value, NULL, 0);
+}
+
+static void set_cfg_chroma_v_dc_qindex_offset(const char *value, EbConfig *cfg) {
+    cfg->config.chroma_v_dc_qindex_offset = (int32_t)strtol(value, NULL, 0);
+}
+
+static void set_cfg_chroma_v_ac_qindex_offset(const char *value, EbConfig *cfg) {
+    cfg->config.chroma_v_ac_qindex_offset = (int32_t)strtol(value, NULL, 0);
+}
+
 //assume the input list of values are in the format of "[v1,v2,v3,...]"
 int arg_parse_list(const char *value, int *list, int n) {
     const char *ptr = value;
     char       *endptr;
     int         i = 0;
+    memset(list, 0, n);
     while (ptr[0] != '\0') {
         if (ptr[0] == '[' || ptr[0] == ']') {
             ptr++;
@@ -505,26 +581,19 @@ int arg_parse_list(const char *value, int *list, int n) {
 }
 
 static void set_cfg_qindex_offsets(const char *value, EbConfig *cfg) {
-    if (cfg->config.hierarchical_levels == 0) {
-        fprintf(stderr,
-                "qindex offsets parameter should be specificied after hierachical_levels\n");
-        exit(1);
-    }
-    arg_parse_list(value, cfg->config.qindex_offsets, cfg->config.hierarchical_levels + 1);
+    arg_parse_list(value, cfg->config.qindex_offsets, EB_MAX_TEMPORAL_LAYERS);
 }
 
 static void set_cfg_chroma_qindex_offsets(const char *value, EbConfig *cfg) {
-    if (cfg->config.hierarchical_levels == 0) {
-        fprintf(stderr,
-                "chroma qindex offsets parameter should be specificied after hierachical_levels\n");
-        exit(1);
-    }
-    arg_parse_list(value, cfg->config.chroma_qindex_offsets, cfg->config.hierarchical_levels + 1);
+    arg_parse_list(value, cfg->config.chroma_qindex_offsets, EB_MAX_TEMPORAL_LAYERS);
 }
 
 static void set_cfg_film_grain(const char *value, EbConfig *cfg) {
     cfg->config.film_grain_denoise_strength = strtol(value, NULL, 0);
 }; //not bool to enable possible algorithm extension in the future
+static void set_cfg_film_grain_denoise_apply(const char *value, EbConfig *cfg) {
+    cfg->config.film_grain_denoise_apply = (Bool)strtol(value, NULL, 0);
+};
 static void set_enable_dlf_flag(const char *value, EbConfig *cfg) {
     cfg->config.enable_dlf_flag = !!strtoul(value, NULL, 0);
 }
@@ -533,13 +602,14 @@ static void set_cdef_enable(const char *value, EbConfig *cfg) {
     cfg->config.cdef_level = -!!strtoul(value, NULL, 0);
 };
 static void set_enable_restoration_flag(const char *value, EbConfig *cfg) {
-    cfg->config.enable_restoration_filtering = -!!strtoul(value, NULL, 0);
+    // Set loop restoration to either DEFAULT(1) or 0
+    cfg->config.enable_restoration_filtering = !!strtoul(value, NULL, 0);
 };
 static void set_enable_mfmv_flag(const char *value, EbConfig *cfg) {
     cfg->config.enable_mfmv = strtol(value, NULL, 0);
 };
 static void set_fast_decode_flag(const char *value, EbConfig *cfg) {
-    cfg->config.fast_decode = (uint8_t)strtol(value, NULL, 0);
+    cfg->config.fast_decode = (Bool)strtol(value, NULL, 0);
 };
 static void set_tile_row(const char *value, EbConfig *cfg) {
     cfg->config.tile_rows = strtoul(value, NULL, 0);
@@ -554,16 +624,16 @@ static void set_enable_tpl_la(const char *value, EbConfig *cfg) {
     cfg->config.enable_tpl_la = (uint8_t)strtoul(value, NULL, 0);
 };
 static void set_rate_control_mode(const char *value, EbConfig *cfg) {
-    cfg->config.rate_control_mode = strtoul(value, NULL, 0);
+    if (svt_av1_enc_parse_parameter(&cfg->config, "rc", value) != EB_ErrorNone)
+        fprintf(stderr, "Invalid value for rate control mode\n");
 };
 static void set_target_bit_rate(const char *value, EbConfig *cfg) {
-    cfg->config.target_bit_rate = 1000 * strtoul(value, NULL, 0);
+    if (svt_av1_enc_parse_parameter(&cfg->config, "tbr", value) != EB_ErrorNone)
+        fprintf(stderr, "Invalid value for target bit rate\n");
 };
 static void set_max_bit_rate(const char *value, EbConfig *cfg) {
-    cfg->config.max_bit_rate = 1000 * strtoul(value, NULL, 0);
-};
-static void set_vbv_buf_size(const char *value, EbConfig *cfg) {
-    cfg->config.vbv_bufsize = 1000 * strtoul(value, NULL, 0);
+    if (svt_av1_enc_parse_parameter(&cfg->config, "mbr", value) != EB_ErrorNone)
+        fprintf(stderr, "Invalid value for max bit rate\n");
 };
 static void set_max_qp_allowed(const char *value, EbConfig *cfg) {
     cfg->config.max_qp_allowed = strtoul(value, NULL, 0);
@@ -584,9 +654,14 @@ static void set_under_shoot_pct(const char *value, EbConfig *cfg) {
     cfg->config.under_shoot_pct = strtoul(value, NULL, 0);
 };
 static void set_over_shoot_pct(const char *value, EbConfig *cfg) {
-    cfg->config.over_shoot_pct     = strtoul(value, NULL, 0);
-    cfg->config.mbr_over_shoot_pct = strtoul(value, NULL, 0);
+    cfg->config.over_shoot_pct = strtoul(value, NULL, 0);
 };
+static void set_mbr_over_shoot_pct(const char *value, EbConfig *cfg) {
+    cfg->config.mbr_over_shoot_pct = strtoul(value, NULL, 0);
+}
+static void set_gop_constraint_rc(const char *value, EbConfig *cfg) {
+    cfg->config.gop_constraint_rc = (Bool)strtoul(value, NULL, 0);
+}
 static void set_buf_sz(const char *value, EbConfig *cfg) {
     cfg->config.maximum_buffer_size_ms = strtoul(value, NULL, 0);
 };
@@ -600,7 +675,7 @@ static void set_recode_loop(const char *value, EbConfig *cfg) {
     cfg->config.recode_loop = strtoul(value, NULL, 0);
 };
 static void set_adaptive_quantization(const char *value, EbConfig *cfg) {
-    cfg->config.enable_adaptive_quantization = (EbBool)strtol(value, NULL, 0);
+    cfg->config.enable_adaptive_quantization = (Bool)strtol(value, NULL, 0);
 };
 static void set_screen_content_mode(const char *value, EbConfig *cfg) {
     cfg->config.screen_content_mode = strtoul(value, NULL, 0);
@@ -611,11 +686,11 @@ static void set_enable_tf(const char *value, EbConfig *cfg) {
 };
 
 static void set_enable_overlays(const char *value, EbConfig *cfg) {
-    cfg->config.enable_overlays = (EbBool)strtoul(value, NULL, 0);
+    cfg->config.enable_overlays = (Bool)strtoul(value, NULL, 0);
 };
 
 static void set_tune(const char *value, EbConfig *cfg) {
-    cfg->config.tune = (EbBool)strtoul(value, NULL, 0);
+    cfg->config.tune = (Bool)strtoul(value, NULL, 0);
 };
 // --- end: ALTREF_FILTERING_SUPPORT
 // --- start: SUPER-RESOLUTION SUPPORT
@@ -635,6 +710,17 @@ static void set_superres_kf_qthres(const char *value, EbConfig *cfg) {
     cfg->config.superres_kf_qthres = (uint8_t)strtoul(value, NULL, 0);
 };
 // --- end: SUPER-RESOLUTION SUPPORT
+// --- start: REFERENCE SCALING SUPPORT
+static void set_resize_mode(const char *value, EbConfig *cfg) {
+    cfg->config.resize_mode = (RESIZE_MODE)strtoul(value, NULL, 0);
+};
+static void set_resize_denom(const char *value, EbConfig *cfg) {
+    cfg->config.resize_denom = (uint8_t)strtoul(value, NULL, 0);
+};
+static void set_resize_kf_denom(const char *value, EbConfig *cfg) {
+    cfg->config.resize_kf_denom = (uint8_t)strtoul(value, NULL, 0);
+};
+// --- end: REFERENCE SCALING SUPPORT
 static void set_high_dynamic_range_input(const char *value, EbConfig *cfg) {
     cfg->config.high_dynamic_range_input = !!strtol(value, NULL, 0);
 };
@@ -664,32 +750,32 @@ static void set_injector_frame_rate(const char *value, EbConfig *cfg) {
 static void set_asm_type(const char *value, EbConfig *cfg) {
     const struct {
         const char *name;
-        CPU_FLAGS   flags;
+        EbCpuFlags  flags;
     } param_maps[] = {
         {"c", 0},
         {"0", 0},
-        {"mmx", (CPU_FLAGS_MMX << 1) - 1},
-        {"1", (CPU_FLAGS_MMX << 1) - 1},
-        {"sse", (CPU_FLAGS_SSE << 1) - 1},
-        {"2", (CPU_FLAGS_SSE << 1) - 1},
-        {"sse2", (CPU_FLAGS_SSE2 << 1) - 1},
-        {"3", (CPU_FLAGS_SSE2 << 1) - 1},
-        {"sse3", (CPU_FLAGS_SSE3 << 1) - 1},
-        {"4", (CPU_FLAGS_SSE3 << 1) - 1},
-        {"ssse3", (CPU_FLAGS_SSSE3 << 1) - 1},
-        {"5", (CPU_FLAGS_SSSE3 << 1) - 1},
-        {"sse4_1", (CPU_FLAGS_SSE4_1 << 1) - 1},
-        {"6", (CPU_FLAGS_SSE4_1 << 1) - 1},
-        {"sse4_2", (CPU_FLAGS_SSE4_2 << 1) - 1},
-        {"7", (CPU_FLAGS_SSE4_2 << 1) - 1},
-        {"avx", (CPU_FLAGS_AVX << 1) - 1},
-        {"8", (CPU_FLAGS_AVX << 1) - 1},
-        {"avx2", (CPU_FLAGS_AVX2 << 1) - 1},
-        {"9", (CPU_FLAGS_AVX2 << 1) - 1},
-        {"avx512", (CPU_FLAGS_AVX512VL << 1) - 1},
-        {"10", (CPU_FLAGS_AVX512VL << 1) - 1},
-        {"max", CPU_FLAGS_ALL},
-        {"11", CPU_FLAGS_ALL},
+        {"mmx", (EB_CPU_FLAGS_MMX << 1) - 1},
+        {"1", (EB_CPU_FLAGS_MMX << 1) - 1},
+        {"sse", (EB_CPU_FLAGS_SSE << 1) - 1},
+        {"2", (EB_CPU_FLAGS_SSE << 1) - 1},
+        {"sse2", (EB_CPU_FLAGS_SSE2 << 1) - 1},
+        {"3", (EB_CPU_FLAGS_SSE2 << 1) - 1},
+        {"sse3", (EB_CPU_FLAGS_SSE3 << 1) - 1},
+        {"4", (EB_CPU_FLAGS_SSE3 << 1) - 1},
+        {"ssse3", (EB_CPU_FLAGS_SSSE3 << 1) - 1},
+        {"5", (EB_CPU_FLAGS_SSSE3 << 1) - 1},
+        {"sse4_1", (EB_CPU_FLAGS_SSE4_1 << 1) - 1},
+        {"6", (EB_CPU_FLAGS_SSE4_1 << 1) - 1},
+        {"sse4_2", (EB_CPU_FLAGS_SSE4_2 << 1) - 1},
+        {"7", (EB_CPU_FLAGS_SSE4_2 << 1) - 1},
+        {"avx", (EB_CPU_FLAGS_AVX << 1) - 1},
+        {"8", (EB_CPU_FLAGS_AVX << 1) - 1},
+        {"avx2", (EB_CPU_FLAGS_AVX2 << 1) - 1},
+        {"9", (EB_CPU_FLAGS_AVX2 << 1) - 1},
+        {"avx512", (EB_CPU_FLAGS_AVX512VL << 1) - 1},
+        {"10", (EB_CPU_FLAGS_AVX512VL << 1) - 1},
+        {"max", EB_CPU_FLAGS_ALL},
+        {"11", EB_CPU_FLAGS_ALL},
     };
     const uint32_t para_map_size = sizeof(param_maps) / sizeof(param_maps[0]);
     uint32_t       i;
@@ -701,7 +787,7 @@ static void set_asm_type(const char *value, EbConfig *cfg) {
         }
     }
 
-    cfg->config.use_cpu_flags = CPU_FLAGS_INVALID;
+    cfg->config.use_cpu_flags = EB_CPU_FLAGS_INVALID;
 };
 static void set_logical_processors(const char *value, EbConfig *cfg) {
     cfg->config.logical_processors = (uint32_t)strtoul(value, NULL, 0);
@@ -716,16 +802,19 @@ static void set_restricted_motion_vector(const char *value, EbConfig *cfg) {
     cfg->config.restricted_motion_vector = !!strtol(value, NULL, 0);
 };
 static void set_cfg_color_primaries(const char *value, EbConfig *cfg) {
-    cfg->config.color_primaries = (uint8_t)strtoul(value, NULL, 0);
+    svt_av1_enc_parse_parameter(&cfg->config, "color-primaries", value);
 }
 static void set_cfg_transfer_characteristics(const char *value, EbConfig *cfg) {
-    cfg->config.transfer_characteristics = (uint8_t)strtoul(value, NULL, 0);
+    svt_av1_enc_parse_parameter(&cfg->config, "transfer-characteristics", value);
 }
 static void set_cfg_matrix_coefficients(const char *value, EbConfig *cfg) {
-    cfg->config.matrix_coefficients = (uint8_t)strtoul(value, NULL, 0);
+    svt_av1_enc_parse_parameter(&cfg->config, "matrix-coefficients", value);
 }
 static void set_cfg_color_range(const char *value, EbConfig *cfg) {
-    cfg->config.color_range = (uint8_t)strtoul(value, NULL, 0);
+    svt_av1_enc_parse_parameter(&cfg->config, "color-range", value);
+}
+static void set_cfg_chroma_sample_position(const char *value, EbConfig *cfg) {
+    svt_av1_enc_parse_parameter(&cfg->config, "chroma-sample-position", value);
 }
 static void set_cfg_mastering_display(const char *value, EbConfig *cfg) {
     if (!svt_aom_parse_mastering_display(&cfg->config.mastering_display, value))
@@ -734,6 +823,12 @@ static void set_cfg_mastering_display(const char *value, EbConfig *cfg) {
 static void set_cfg_content_light(const char *value, EbConfig *cfg) {
     if (!svt_aom_parse_content_light_level(&cfg->config.content_light_level, value))
         fprintf(stderr, "Failed to parse content light level info properly\n");
+}
+static void set_cfg_sframe_dist(const char *value, EbConfig *cfg) {
+    cfg->config.sframe_dist = (int32_t)strtol(value, NULL, 0);
+}
+static void set_cfg_sframe_mode(const char *value, EbConfig *cfg) {
+    cfg->config.sframe_mode = (EbSFrameMode)strtoul(value, NULL, 0);
 }
 
 enum CfgType {
@@ -812,7 +907,7 @@ ConfigEntry config_entry_options[] = {
     {SINGLE_INPUT,
      PRESET_TOKEN,
      "Encoder preset, presets < 0 are for debugging. Higher presets means faster encodes, but with "
-     "a quality tradeoff, default is 12 [-2-13]",
+     "a quality tradeoff, default is 10 [-2-13]",
      set_enc_mode},
 
     {SINGLE_INPUT,
@@ -841,6 +936,16 @@ ConfigEntry config_entry_global_options[] = {
      HEIGHT_LONG_TOKEN,
      "Frame height in pixels, inferred if y4m, default is 0 [64-8704]",
      set_cfg_source_height},
+
+    {SINGLE_INPUT,
+     FORCED_MAX_FRAME_WIDTH_TOKEN,
+     "Maximum frame width value to force, default is 0 [64-16384]",
+     set_cfg_forced_max_frame_width},
+
+    {SINGLE_INPUT,
+     FORCED_MAX_FRAME_HEIGHT_TOKEN,
+     "Maximum frame height value to force, default is 0 [64-8704]",
+     set_cfg_forced_max_frame_height},
 
     {SINGLE_INPUT,
      NUMBER_OF_PICTURES_TOKEN,
@@ -878,11 +983,11 @@ ConfigEntry config_entry_global_options[] = {
      set_high_dynamic_range_input},
     {SINGLE_INPUT,
      FRAME_RATE_TOKEN,
-     "Input video frame rate, integer values only, inferred if y4m, default is 25 [1-240]",
+     "Input video frame rate, integer values only, inferred if y4m, default is 60 [1-240]",
      set_frame_rate},
     {SINGLE_INPUT,
      FRAME_RATE_NUMERATOR_TOKEN,
-     "Input video frame rate numerator, default is 25000 [0-2^32-1]",
+     "Input video frame rate numerator, default is 60000 [0-2^32-1]",
      set_frame_rate_numerator},
     {SINGLE_INPUT,
      FRAME_RATE_DENOMINATOR_TOKEN,
@@ -894,7 +999,7 @@ ConfigEntry config_entry_global_options[] = {
      set_encoder_bit_depth},
     {SINGLE_INPUT,
      INPUT_COMPRESSED_TEN_BIT_FORMAT,
-     "Pack 10bit video, handled between the app and library, default is 0 [0-1]",
+     "Depreciated and ignored, default is 0 [0-1]",
      set_compressed_ten_bit_format},
     // Latency
     {SINGLE_INPUT,
@@ -940,23 +1045,23 @@ ConfigEntry config_entry_rc[] = {
     // Rate Control
     {SINGLE_INPUT,
      RATE_CONTROL_ENABLE_TOKEN,
-     "Rate control mode, default is 0 [0: CRF or CQP (if `--enable-tpl-la` is 0), 1: VBR, 2: CBR]",
+     "Rate control mode, default is 0 [0: CRF or CQP (if `--aq-mode` is 0), 1: VBR, 2: CBR]",
      set_rate_control_mode},
-    {SINGLE_INPUT, QP_TOKEN, "Initial QP level value, default is 50 [1-63]", set_cfg_qp},
-    {SINGLE_INPUT, QP_LONG_TOKEN, "Initial QP level value, default is 50 [1-63]", set_cfg_qp},
+    {SINGLE_INPUT, QP_TOKEN, "Initial QP level value, default is 35 [1-63]", set_cfg_qp},
+    {SINGLE_INPUT, QP_LONG_TOKEN, "Initial QP level value, default is 35 [1-63]", set_cfg_qp},
     {SINGLE_INPUT,
      CRF_LONG_TOKEN,
-     "Constant Rate Factor value, setting this value is equal to `--rc 0 --enable-tpl-la 1 --qp "
-     "x`, default is 50 [1-63]",
+     "Constant Rate Factor value, setting this value is equal to `--rc 0 --aq-mode 2 --qp "
+     "x`, default is 35 [1-63]",
      set_cfg_crf},
 
     {SINGLE_INPUT,
      TARGET_BIT_RATE_TOKEN,
-     "Target Bitrate (kbps), only applicable for VBR and CBR encoding, default is 7000 [1-4294967]",
+     "Target Bitrate (kbps), only applicable for VBR and CBR encoding, default is 7000 [1-100000]",
      set_target_bit_rate},
     {SINGLE_INPUT,
      MAX_BIT_RATE_TOKEN,
-     "Maximum Bitrate (kbps) only applicable for CRF and VBR encoding, default is 0 [1-4294967]",
+     "Maximum Bitrate (kbps) only applicable for CRF encoding, default is 0 [1-100000]",
      set_max_bit_rate},
     {SINGLE_INPUT,
      USE_QP_FILE_TOKEN,
@@ -981,16 +1086,10 @@ ConfigEntry config_entry_rc[] = {
      "Set adaptive QP level, default is 2 [0: off, 1: variance base using AV1 segments, 2: deltaq "
      "pred efficiency]",
      set_adaptive_quantization},
-
-    {SINGLE_INPUT,
-     VBV_BUFSIZE_TOKEN,
-     "VBV buffer size, default is the value of `--tbr` [1-4294967]",
-     set_vbv_buf_size},
-
     {SINGLE_INPUT,
      USE_FIXED_QINDEX_OFFSETS_TOKEN,
      "Overwrite the encoder default hierarchical layer based QP assignment and use fixed Q index "
-     "offsets, default is 0 [0-1]",
+     "offsets, default is 0 [0-2]",
      set_cfg_use_fixed_qindex_offsets},
     {SINGLE_INPUT,
      KEY_FRAME_QINDEX_OFFSET_TOKEN,
@@ -1010,28 +1109,57 @@ ConfigEntry config_entry_rc[] = {
      "list of chroma Q index offsets per hierarchical layer, separated by `,` with each offset in "
      "the range of [-256-255], default is `0,0,..,0`",
      set_cfg_chroma_qindex_offsets},
-
+    {SINGLE_INPUT,
+     LUMA_Y_DC_QINDEX_OFFSET_TOKEN,
+     "Luma Y DC Qindex Offset",
+     set_cfg_luma_y_dc_qindex_offset},
+    {SINGLE_INPUT,
+     CHROMA_U_DC_QINDEX_OFFSET_TOKEN,
+     "Chroma U DC Qindex Offset",
+     set_cfg_chroma_u_dc_qindex_offset},
+    {SINGLE_INPUT,
+     CHROMA_U_AC_QINDEX_OFFSET_TOKEN,
+     "Chroma U AC Qindex Offset",
+     set_cfg_chroma_u_ac_qindex_offset},
+    {SINGLE_INPUT,
+     CHROMA_V_DC_QINDEX_OFFSET_TOKEN,
+     "Chroma V DC Qindex Offset",
+     set_cfg_chroma_v_dc_qindex_offset},
+    {SINGLE_INPUT,
+     CHROMA_V_AC_QINDEX_OFFSET_TOKEN,
+     "Chroma V AC Qindex Offset",
+     set_cfg_chroma_v_ac_qindex_offset},
     {SINGLE_INPUT,
      UNDER_SHOOT_PCT_TOKEN,
-     "Allowable datarate undershoot (min) target (percentage), default is 25, but can change based "
-     "on rate control [0-100]",
+     "Only for VBR and CBR, allowable datarate undershoot (min) target (percentage), default is "
+     "25, but can change based on rate control [0-100]",
      set_under_shoot_pct},
     {SINGLE_INPUT,
      OVER_SHOOT_PCT_TOKEN,
-     "Allowable datarate overshoot (max) target (percentage), default is 25, but can change based "
-     "on rate control [0-100]",
+     "Only for VBR and CBR, allowable datarate overshoot (max) target (percentage), default is 25, "
+     "but can change based on rate control [0-100]",
      set_over_shoot_pct},
     {SINGLE_INPUT,
+     MBR_OVER_SHOOT_PCT_TOKEN,
+     "Only for Capped CRF, allowable datarate overshoot (max) target (percentage), default is 50, "
+     "but can change based on rate control [0-100]",
+     set_mbr_over_shoot_pct},
+    {SINGLE_INPUT,
+     GOP_CONSTRAINT_RC_TOKEN,
+     "Enable GoP constraint rc.  When enabled, the rate control matches the target rate for each "
+     "GoP, default is 0 [0-1]",
+     set_gop_constraint_rc},
+    {SINGLE_INPUT,
      BUFFER_SIZE_TOKEN,
-     "Client buffer size (ms), only applicable for CBR, default is 6000 [0-`(2^63)-1`]",
+     "Client buffer size (ms), only applicable for CBR, default is 6000 [0-10000]",
      set_buf_sz},
     {SINGLE_INPUT,
      BUFFER_INITIAL_SIZE_TOKEN,
-     "Client initial buffer size (ms), only applicable for CBR, default is 4000 [0-`(2^63)-1`]",
+     "Client initial buffer size (ms), only applicable for CBR, default is 4000 [0-10000]",
      set_buf_initial_sz},
     {SINGLE_INPUT,
      BUFFER_OPTIMAL_SIZE_TOKEN,
-     "Client optimal buffer size (ms), only applicable for CBR, default is 5000 [0-`(2^63)-1`]",
+     "Client optimal buffer size (ms), only applicable for CBR, default is 5000 [0-10000]",
      set_buf_optimal_sz},
     {SINGLE_INPUT,
      RECODE_LOOP_TOKEN,
@@ -1044,13 +1172,24 @@ ConfigEntry config_entry_rc[] = {
      set_vbr_bias_pct},
     {SINGLE_INPUT,
      VBR_MIN_SECTION_PCT_TOKEN,
-     "GOP min bitrate (expressed as a percentage of the target rate), default is 0 [0-`(2^32)-1`]",
+     "GOP min bitrate (expressed as a percentage of the target rate), default is 0 [0-100]",
      set_vbr_min_section_pct},
     {SINGLE_INPUT,
      VBR_MAX_SECTION_PCT_TOKEN,
-     "GOP max bitrate (expressed as a percentage of the target rate), default is 2000 "
-     "[0-`(2^32)-1`]",
+     "GOP max bitrate (expressed as a percentage of the target rate), default is 2000 [0-10000]",
      set_vbr_max_section_pct},
+    {SINGLE_INPUT,
+     ENABLE_QM_TOKEN,
+     "Enable quantisation matrices, default is 0 [0-1]",
+     set_enable_qm},
+    {SINGLE_INPUT,
+     MIN_QM_LEVEL_TOKEN,
+     "Min quant matrix flatness, default is 8 [0-15]",
+     set_min_qm_level},
+    {SINGLE_INPUT,
+     MAX_QM_LEVEL_TOKEN,
+     "Max quant matrix flatness, default is 15 [0-15]",
+     set_max_qm_level},
     // Termination
     {SINGLE_INPUT, NULL, NULL, NULL}};
 
@@ -1076,7 +1215,7 @@ ConfigEntry config_entry_2p[] = {
 ConfigEntry config_entry_intra_refresh[] = {
     {SINGLE_INPUT,
      KEYINT_TOKEN,
-     "GOP size (frames), default is -2 [-2: ~2 seconds, -1: \"infinite\" and only applicable for "
+     "GOP size (frames), default is -2 [-2: ~5 seconds, -1: \"infinite\" and only applicable for "
      "CRF, 0: same as -1]",
      set_keyint},
     {SINGLE_INPUT,
@@ -1095,14 +1234,19 @@ ConfigEntry config_entry_intra_refresh[] = {
      set_look_ahead_distance},
     {SINGLE_INPUT,
      HIERARCHICAL_LEVELS_TOKEN,
-     "Set hierarchical levels beyond the base layer, default is 4 [3: 4 temporal layers, 4: 5 "
+     "Set hierarchical levels beyond the base layer, default is 4 [2: 3 temporal layers, 3: 4 "
+     "temporal layers, 4: 5 "
      "layers, 5: 6 layers]",
      set_hierarchical_levels},
     {SINGLE_INPUT,
      PRED_STRUCT_TOKEN,
-     "Set prediction structure, default is 2 [0: low delay P-frames, 1: low delay B-frames, 2: "
+     "Set prediction structure, default is 2 [1: low delay frames, 2: "
      "random access]",
      set_cfg_pred_structure},
+    {SINGLE_INPUT,
+     FORCE_KEY_FRAMES_TOKEN,
+     "Force key frames at the comma separated specifiers. `#f` for frames, `#.#s` for seconds",
+     set_cfg_force_key_frames},
     // Termination
     {SINGLE_INPUT, NULL, NULL, NULL}};
 
@@ -1144,7 +1288,7 @@ ConfigEntry config_entry_specific[] = {
      set_enable_mfmv_flag},
     {SINGLE_INPUT,
      FAST_DECODE_TOKEN,
-     "Fast Decoder levels, default is 0 [0-3]",
+     "Fast Decoder levels, default is 0 [0-1]",
      set_fast_decode_flag},
     // --- start: ALTREF_FILTERING_SUPPORT
     {SINGLE_INPUT,
@@ -1180,6 +1324,13 @@ ConfigEntry config_entry_specific[] = {
      "Enable film grain, default is 0 [0: off, 1-50: level of denoising for film grain]",
      set_cfg_film_grain},
 
+    {SINGLE_INPUT,
+     FILM_GRAIN_DENOISE_APPLY_TOKEN,
+     "Apply denoising when film grain is ON, default is 1 [0: no denoising, film grain data is "
+     "still in frame header, "
+     "1: level of denoising is set by the film-grain parameter]",
+     set_cfg_film_grain_denoise_apply},
+
     // --- start: SUPER-RESOLUTION SUPPORT
     {SINGLE_INPUT,
      SUPERRES_MODE_INPUT,
@@ -1206,6 +1357,35 @@ ConfigEntry config_entry_specific[] = {
      "[0-63]",
      set_superres_kf_qthres},
     // --- end: SUPER-RESOLUTION SUPPORT
+
+    // --- start: SWITCH_FRAME SUPPORT
+    {SINGLE_INPUT,
+     SFRAME_DIST_TOKEN,
+     "S-Frame interval (frames) (0: OFF[default], > 0: ON)",
+     set_cfg_sframe_dist},
+    {SINGLE_INPUT,
+     SFRAME_MODE_TOKEN,
+     "S-Frame insertion mode ([1-2], 1: the considered frame will be made into an S-Frame only if "
+     "it is an altref frame,"
+     " 2: the next altref frame will be made into an S-Frame[default])",
+     set_cfg_sframe_mode},
+    // --- end: SWITCH_FRAME SUPPORT
+    // --- start: REFERENCE SCALING SUPPORT
+    {SINGLE_INPUT,
+     RESIZE_MODE_INPUT,
+     "Enable resize mode [0: none, 1: fixed scale, 2: random scale, 3: dynamic scale, 4: random "
+     "access]",
+     set_resize_mode},
+    {SINGLE_INPUT,
+     RESIZE_DENOM,
+     "Resize denominator, only applicable for mode == 1 [8-16]",
+     set_resize_denom},
+    {SINGLE_INPUT,
+     RESIZE_KF_DENOM,
+     "Resize denominator for key frames, only applicable for mode == 1 [8-16]",
+     set_resize_kf_denom},
+    // --- end: REFERENCE SCALING SUPPORT
+
     // Termination
     {SINGLE_INPUT, NULL, NULL, NULL}};
 
@@ -1227,6 +1407,11 @@ ConfigEntry config_entry_color_description[] = {
      COLOR_RANGE_NEW_TOKEN,
      "Color range, default is 0 [0: Studio, 1: Full]",
      set_cfg_color_range},
+    {SINGLE_INPUT,
+     CHROMA_SAMPLE_POSITION_TOKEN,
+     "Chroma sample position, default is 'unknown' ['unknown', 'vertical'/'left', "
+     "'colocated'/'topleft']",
+     set_cfg_chroma_sample_position},
 
     {SINGLE_INPUT,
      MASTERING_DISPLAY_TOKEN,
@@ -1264,7 +1449,15 @@ ConfigEntry config_entry[] = {
     {SINGLE_INPUT, WIDTH_LONG_TOKEN, "SourceWidth", set_cfg_source_width},
     {SINGLE_INPUT, HEIGHT_TOKEN, "SourceHeight", set_cfg_source_height},
     {SINGLE_INPUT, HEIGHT_LONG_TOKEN, "SourceHeight", set_cfg_source_height},
-
+    {SINGLE_INPUT,
+     FORCED_MAX_FRAME_WIDTH_TOKEN,
+     "ForcedMaximumFrameWidth",
+     set_cfg_forced_max_frame_width},
+    {SINGLE_INPUT,
+     FORCED_MAX_FRAME_HEIGHT_TOKEN,
+     "ForcedMaximumFrameHeight",
+     set_cfg_forced_max_frame_height},
+    // Prediction Structure
     {SINGLE_INPUT, NUMBER_OF_PICTURES_TOKEN, "FrameToBeEncoded", set_cfg_frames_to_be_encoded},
     {SINGLE_INPUT, NUMBER_OF_PICTURES_LONG_TOKEN, "FrameToBeEncoded", set_cfg_frames_to_be_encoded},
     {SINGLE_INPUT, BUFFERED_INPUT_TOKEN, "BufferedInput", set_buffered_input},
@@ -1322,8 +1515,6 @@ ConfigEntry config_entry[] = {
 
     {SINGLE_INPUT, ADAPTIVE_QP_ENABLE_NEW_TOKEN, "AdaptiveQuantization", set_adaptive_quantization},
 
-    {SINGLE_INPUT, VBV_BUFSIZE_TOKEN, "VBVBufSize", set_vbv_buf_size},
-
     //   qindex offsets
     {SINGLE_INPUT,
      USE_FIXED_QINDEX_OFFSETS_TOKEN,
@@ -1342,9 +1533,30 @@ ConfigEntry config_entry[] = {
      CHROMA_QINDEX_OFFSETS_TOKEN,
      "ChromaQIndexOffsets",
      set_cfg_chroma_qindex_offsets},
-
+    {SINGLE_INPUT,
+     LUMA_Y_DC_QINDEX_OFFSET_TOKEN,
+     "LumaYDCQindexOffset",
+     set_cfg_luma_y_dc_qindex_offset},
+    {SINGLE_INPUT,
+     CHROMA_U_DC_QINDEX_OFFSET_TOKEN,
+     "ChromaUDCQindexOffset",
+     set_cfg_chroma_u_dc_qindex_offset},
+    {SINGLE_INPUT,
+     CHROMA_U_AC_QINDEX_OFFSET_TOKEN,
+     "ChromaUACQindexOffset",
+     set_cfg_chroma_u_ac_qindex_offset},
+    {SINGLE_INPUT,
+     CHROMA_V_DC_QINDEX_OFFSET_TOKEN,
+     "ChromaVDCQindexOffset",
+     set_cfg_chroma_v_dc_qindex_offset},
+    {SINGLE_INPUT,
+     CHROMA_V_AC_QINDEX_OFFSET_TOKEN,
+     "ChromaVACQindexOffset",
+     set_cfg_chroma_v_ac_qindex_offset},
     {SINGLE_INPUT, UNDER_SHOOT_PCT_TOKEN, "UnderShootPct", set_under_shoot_pct},
     {SINGLE_INPUT, OVER_SHOOT_PCT_TOKEN, "OverShootPct", set_over_shoot_pct},
+    {SINGLE_INPUT, MBR_OVER_SHOOT_PCT_TOKEN, "MbrOverShootPct", set_mbr_over_shoot_pct},
+    {SINGLE_INPUT, GOP_CONSTRAINT_RC_TOKEN, "GopConstraintRc", set_gop_constraint_rc},
     {SINGLE_INPUT, BUFFER_SIZE_TOKEN, "BufSz", set_buf_sz},
     {SINGLE_INPUT, BUFFER_INITIAL_SIZE_TOKEN, "BufInitialSz", set_buf_initial_sz},
     {SINGLE_INPUT, BUFFER_OPTIMAL_SIZE_TOKEN, "BufOptimalSz", set_buf_optimal_sz},
@@ -1370,6 +1582,7 @@ ConfigEntry config_entry[] = {
     //   Prediction Structure
     {SINGLE_INPUT, HIERARCHICAL_LEVELS_TOKEN, "HierarchicalLevels", set_hierarchical_levels},
     {SINGLE_INPUT, PRED_STRUCT_TOKEN, "PredStructure", set_cfg_pred_structure},
+    {SINGLE_INPUT, FORCE_KEY_FRAMES_TOKEN, "ForceKeyFrames", set_cfg_force_key_frames},
 
     // AV1 Specific Options
     {SINGLE_INPUT, TILE_ROW_TOKEN, "TileRow", set_tile_row},
@@ -1390,6 +1603,10 @@ ConfigEntry config_entry[] = {
      "RestrictedMotionVector",
      set_restricted_motion_vector},
     {SINGLE_INPUT, FILM_GRAIN_TOKEN, "FilmGrain", set_cfg_film_grain},
+    {SINGLE_INPUT,
+     FILM_GRAIN_DENOISE_APPLY_TOKEN,
+     "FilmGrainDenoise",
+     set_cfg_film_grain_denoise_apply},
 
     //   Super-resolution support
     {SINGLE_INPUT, SUPERRES_MODE_INPUT, "SuperresMode", set_superres_mode},
@@ -1397,6 +1614,14 @@ ConfigEntry config_entry[] = {
     {SINGLE_INPUT, SUPERRES_KF_DENOM, "SuperresKfDenom", set_superres_kf_denom},
     {SINGLE_INPUT, SUPERRES_QTHRES, "SuperresQthres", set_superres_qthres},
     {SINGLE_INPUT, SUPERRES_KF_QTHRES, "SuperresKfQthres", set_superres_kf_qthres},
+
+    // Switch frame support
+    {SINGLE_INPUT, SFRAME_DIST_TOKEN, "SframeInterval", set_cfg_sframe_dist},
+    {SINGLE_INPUT, SFRAME_MODE_TOKEN, "SframeMode", set_cfg_sframe_mode},
+    // Reference Scaling support
+    {SINGLE_INPUT, RESIZE_MODE_INPUT, "ResizeMode", set_resize_mode},
+    {SINGLE_INPUT, RESIZE_DENOM, "ResizeDenom", set_resize_denom},
+    {SINGLE_INPUT, RESIZE_KF_DENOM, "ResizeKfDenom", set_resize_kf_denom},
 
     // Color Description Options
     {SINGLE_INPUT, COLOR_PRIMARIES_NEW_TOKEN, "ColorPrimaries", set_cfg_color_primaries},
@@ -1409,8 +1634,17 @@ ConfigEntry config_entry[] = {
      "MatrixCoefficients",
      set_cfg_matrix_coefficients},
     {SINGLE_INPUT, COLOR_RANGE_NEW_TOKEN, "ColorRange", set_cfg_color_range},
+    {SINGLE_INPUT,
+     CHROMA_SAMPLE_POSITION_TOKEN,
+     "ChromaSamplePosition",
+     set_cfg_chroma_sample_position},
     {SINGLE_INPUT, MASTERING_DISPLAY_TOKEN, "MasteringDisplay", set_cfg_mastering_display},
     {SINGLE_INPUT, CONTENT_LIGHT_LEVEL_TOKEN, "ContentLightLevel", set_cfg_content_light},
+
+    // QM
+    {SINGLE_INPUT, ENABLE_QM_TOKEN, "EnableQM", set_enable_qm},
+    {SINGLE_INPUT, MIN_QM_LEVEL_TOKEN, "MinQmLevel", set_min_qm_level},
+    {SINGLE_INPUT, MAX_QM_LEVEL_TOKEN, "MaxQmLevel", set_max_qm_level},
     // Termination
     {SINGLE_INPUT, NULL, NULL, NULL}};
 
@@ -1436,11 +1670,6 @@ void svt_config_dtor(EbConfig *config_ptr) {
     if (!config_ptr)
         return;
     // Close any files that are open
-    if (config_ptr->config_file) {
-        fclose(config_ptr->config_file);
-        config_ptr->config_file = (FILE *)NULL;
-    }
-
     if (config_ptr->input_file) {
         if (!config_ptr->input_file_is_fifo)
             fclose(config_ptr->input_file);
@@ -1448,6 +1677,8 @@ void svt_config_dtor(EbConfig *config_ptr) {
     }
 
     if (config_ptr->bitstream_file) {
+        if (!fseek(config_ptr->bitstream_file, 0, SEEK_SET))
+            write_ivf_stream_header(config_ptr, config_ptr->frames_encoded);
         fclose(config_ptr->bitstream_file);
         config_ptr->bitstream_file = (FILE *)NULL;
     }
@@ -1455,11 +1686,6 @@ void svt_config_dtor(EbConfig *config_ptr) {
     if (config_ptr->recon_file) {
         fclose(config_ptr->recon_file);
         config_ptr->recon_file = (FILE *)NULL;
-    }
-
-    if (config_ptr->input_pred_struct_file) {
-        fclose(config_ptr->input_pred_struct_file);
-        config_ptr->input_pred_struct_file = (FILE *)NULL;
     }
 
     if (config_ptr->input_pred_struct_filename) {
@@ -1481,6 +1707,16 @@ void svt_config_dtor(EbConfig *config_ptr) {
         fclose(config_ptr->stat_file);
         config_ptr->stat_file = (FILE *)NULL;
     }
+
+    if (config_ptr->output_stat_file) {
+        fclose(config_ptr->output_stat_file);
+        config_ptr->output_stat_file = (FILE *)NULL;
+    }
+
+    for (size_t i = 0; i < config_ptr->forced_keyframes.count; ++i)
+        free(config_ptr->forced_keyframes.specifiers[i]);
+    free(config_ptr->forced_keyframes.specifiers);
+    free(config_ptr->forced_keyframes.frames);
     free((void *)config_ptr->stats);
     free(config_ptr);
     return;
@@ -1497,7 +1733,7 @@ EbErrorType enc_channel_ctor(EncChannel *c) {
     c->exit_cond_output = APP_ExitConditionError;
     c->exit_cond_recon  = APP_ExitConditionError;
     c->exit_cond_input  = APP_ExitConditionError;
-    c->active           = EB_FALSE;
+    c->active           = FALSE;
     return svt_av1_enc_init_handle(
         &c->app_callback->svt_encoder_handle, c->app_callback, &c->config->config);
 }
@@ -1689,16 +1925,18 @@ static int32_t find_token(int32_t argc, char *const argv[], char const *token, c
 static int32_t read_config_file(EbConfig *config, char *config_path, uint32_t instance_idx) {
     int32_t return_error = 0;
 
-    // Open the config file
-    FOPEN(config->config_file, config_path, "rb");
+    FILE *config_file;
 
-    if (config->config_file != (FILE *)NULL) {
-        int32_t config_file_size   = find_file_size(config->config_file);
+    // Open the config file
+    FOPEN(config_file, config_path, "rb");
+
+    if (config_file) {
+        int32_t config_file_size   = find_file_size(config_file);
         char   *config_file_buffer = (char *)malloc(config_file_size);
 
-        if (config_file_buffer != (char *)NULL) {
+        if (config_file_buffer) {
             int32_t result_size = (int32_t)fread(
-                config_file_buffer, 1, config_file_size, config->config_file);
+                config_file_buffer, 1, config_file_size, config_file);
 
             if (result_size == config_file_size) {
                 parse_config_file(config, config_file_buffer, config_file_size);
@@ -1712,8 +1950,7 @@ static int32_t read_config_file(EbConfig *config, char *config_path, uint32_t in
         }
 
         free(config_file_buffer);
-        fclose(config->config_file);
-        config->config_file = (FILE *)NULL;
+        fclose(config_file);
     } else {
         fprintf(stderr,
                 "Error channel %u: Couldn't open Config File: %s\n",
@@ -1726,7 +1963,7 @@ static int32_t read_config_file(EbConfig *config, char *config_path, uint32_t in
 }
 
 /* get config->rc_stats_buffer from config->input_stat_file */
-EbBool load_twopass_stats_in(EbConfig *cfg) {
+Bool load_twopass_stats_in(EbConfig *cfg) {
     EbSvtAv1EncConfiguration *config = &cfg->config;
 #ifdef _WIN32
     int          fd = _fileno(cfg->input_stat_file);
@@ -1738,17 +1975,17 @@ EbBool load_twopass_stats_in(EbConfig *cfg) {
     int         ret         = fstat(fd, &file_stat);
 #endif
     if (ret) {
-        return EB_FALSE;
+        return FALSE;
     }
     config->rc_stats_buffer.buf = malloc(file_stat.st_size);
     if (config->rc_stats_buffer.buf) {
         config->rc_stats_buffer.sz = (uint64_t)file_stat.st_size;
         if (fread(config->rc_stats_buffer.buf, 1, file_stat.st_size, cfg->input_stat_file) !=
             (size_t)file_stat.st_size) {
-            return EB_FALSE;
+            return FALSE;
         }
         if (file_stat.st_size == 0) {
-            return EB_FALSE;
+            return FALSE;
         }
     }
     return config->rc_stats_buffer.buf != NULL;
@@ -1759,7 +1996,7 @@ EbErrorType handle_stats_file(EbConfig *config, EncPass enc_pass,
     case ENC_SINGLE_PASS: {
         const char *stats = config->stats ? config->stats : "svtav1_2pass.log";
         if (config->config.pass == 1) {
-            if (!fopen_and_lock(&config->output_stat_file, stats, EB_TRUE)) {
+            if (!fopen_and_lock(&config->output_stat_file, stats, TRUE)) {
                 fprintf(config->error_log_file,
                         "Error instance %u: can't open stats file %s for write \n",
                         channel_number + 1,
@@ -1771,8 +2008,9 @@ EbErrorType handle_stats_file(EbConfig *config, EncPass enc_pass,
         // Multi pass VBR has 3 passes, and pass = 2 is the middle pass
         // In this pass, data is read from the file, copied to memory, updated and
         // written back to the same file
-        else if (config->config.pass == 2 && config->config.rate_control_mode == 1) {
-            if (!fopen_and_lock(&config->input_stat_file, stats, EB_FALSE)) {
+        else if (config->config.pass == 2 &&
+                 config->config.rate_control_mode == SVT_AV1_RC_MODE_VBR) {
+            if (!fopen_and_lock(&config->input_stat_file, stats, FALSE)) {
                 fprintf(config->error_log_file,
                         "Error instance %u: can't read stats file %s for read\n",
                         channel_number + 1,
@@ -1793,7 +2031,7 @@ EbErrorType handle_stats_file(EbConfig *config, EncPass enc_pass,
                 config->input_stat_file = (FILE *)NULL;
             }
             // Open the file in write mode
-            if (!fopen_and_lock(&config->output_stat_file, stats, EB_TRUE)) {
+            if (!fopen_and_lock(&config->output_stat_file, stats, TRUE)) {
                 fprintf(config->error_log_file,
                         "Error instance %u: can't open stats file %s for write \n",
                         channel_number + 1,
@@ -1802,9 +2040,11 @@ EbErrorType handle_stats_file(EbConfig *config, EncPass enc_pass,
             }
         }
         // Final pass: pass = 2 for CRF and pass = 3 for VBR
-        else if ((config->config.pass == 2 && config->config.rate_control_mode == 0) ||
-                 (config->config.pass == 3 && config->config.rate_control_mode == 1)) {
-            if (!fopen_and_lock(&config->input_stat_file, stats, EB_FALSE)) {
+        else if ((config->config.pass == 2 &&
+                  config->config.rate_control_mode == SVT_AV1_RC_MODE_CQP_OR_CRF) ||
+                 (config->config.pass == 3 &&
+                  config->config.rate_control_mode == SVT_AV1_RC_MODE_VBR)) {
+            if (!fopen_and_lock(&config->input_stat_file, stats, FALSE)) {
                 fprintf(config->error_log_file,
                         "Error instance %u: can't read stats file %s for read\n",
                         channel_number + 1,
@@ -1826,7 +2066,7 @@ EbErrorType handle_stats_file(EbConfig *config, EncPass enc_pass,
         // for combined two passes,
         // we only ouptut first pass stats when user explicitly set the --stats
         if (config->stats) {
-            if (!fopen_and_lock(&config->output_stat_file, config->stats, EB_TRUE)) {
+            if (!fopen_and_lock(&config->output_stat_file, config->stats, TRUE)) {
                 fprintf(config->error_log_file,
                         "Error instance %u: can't open stats file %s for write \n",
                         channel_number + 1,
@@ -1886,10 +2126,24 @@ static EbErrorType app_verify_config(EbConfig *config, uint32_t channel_number) 
         return_error = EB_ErrorBadParameter;
     }
 
+    if (config->buffered_input == 0) {
+        fprintf(config->error_log_file,
+                "Error instance %u: Buffered Input cannot be 0\n",
+                channel_number + 1);
+        return_error = EB_ErrorBadParameter;
+    }
+
     if (config->buffered_input < -1) {
         fprintf(config->error_log_file,
-                "Error instance %u: Invalid buffered_input. buffered_input must greater or equal "
-                "to -1\n",
+                "Error instance %u: Invalid buffered_input. buffered_input must be -1 or greater "
+                "than or equal to 1\n",
+                channel_number + 1);
+        return_error = EB_ErrorBadParameter;
+    }
+
+    if (config->buffered_input != -1 && config->y4m_input) {
+        fprintf(config->error_log_file,
+                "Error instance %u: Buffered input is currently not available with y4m inputs\n",
                 channel_number + 1);
         return_error = EB_ErrorBadParameter;
     }
@@ -1902,7 +2156,7 @@ static EbErrorType app_verify_config(EbConfig *config, uint32_t channel_number) 
         return_error = EB_ErrorBadParameter;
     }
 
-    if (config->config.use_qp_file == EB_TRUE && config->qp_file == NULL) {
+    if (config->config.use_qp_file == TRUE && config->qp_file == NULL) {
         fprintf(config->error_log_file,
                 "Error instance %u: Could not find QP file, UseQpFile is set to 1\n",
                 channel_number + 1);
@@ -1926,6 +2180,18 @@ static EbErrorType app_verify_config(EbConfig *config, uint32_t channel_number) 
     if (!config->injector_frame_rate && config->injector) {
         fprintf(config->error_log_file,
                 "Error Instance %u: The injector frame rate should be greater than 0 fps \n",
+                channel_number + 1);
+        return_error = EB_ErrorBadParameter;
+    }
+    if (config->config.frame_rate_numerator == 0 || config->config.frame_rate_denominator == 0) {
+        fprintf(config->error_log_file,
+                "Error Instance %u: The frame_rate_numerator and frame_rate_denominator should be "
+                "greater than 0\n",
+                channel_number + 1);
+        return_error = EB_ErrorBadParameter;
+    } else if (config->config.frame_rate_numerator / config->config.frame_rate_denominator > 240) {
+        fprintf(config->error_log_file,
+                "Error Instance %u: The maximum allowed frame_rate is 240 fps\n",
                 channel_number + 1);
         return_error = EB_ErrorBadParameter;
     }
@@ -2154,7 +2420,7 @@ uint32_t get_number_of_channels(int32_t argc, char *const argv[]) {
     return 1;
 }
 
-static EbBool check_two_pass_conflicts(int32_t argc, char *const argv[]) {
+static Bool check_two_pass_conflicts(int32_t argc, char *const argv[]) {
     char        config_string[COMMAND_LINE_MAX_SIZE];
     const char *conflicts[] = {
         PASS_TOKEN,
@@ -2166,34 +2432,47 @@ static EbBool check_two_pass_conflicts(int32_t argc, char *const argv[]) {
         if (find_token(argc, argv, token, config_string) == 0) {
             fprintf(
                 stderr, "[SVT-Error]: --passes is not accepted in combination with %s\n", token);
-            return EB_TRUE;
+            return TRUE;
         }
         i++;
     }
-    return EB_FALSE;
+    return FALSE;
 }
 /*
 * Returns the number of passes, multi_pass_mode
 */
-uint32_t get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_PASS],
-                    MultiPassModes *multi_pass_mode) {
-    char config_string[COMMAND_LINE_MAX_SIZE];
+uint32_t get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_PASS]) {
+    char           config_string[COMMAND_LINE_MAX_SIZE];
+    MultiPassModes multi_pass_mode;
 
-    int rc_mode  = 0;
-    int enc_mode = 0;
-    int ip       = -1;
+    int rc_mode = 0;
+    // copied from str_to_rc_mode()
+    const struct {
+        const char *name;
+        uint32_t    mode;
+    } rc[] = {
+        {"0", 0},
+        {"1", 1},
+        {"2", 2},
+        {"cqp", 0},
+        {"crf", 0},
+        {"vbr", 1},
+        {"cbr", 2},
+    };
+    const size_t rc_size  = sizeof(rc) / sizeof(rc[0]);
+    int          enc_mode = 0;
+    int          ip       = -1;
     // Read required inputs to decide on the number of passes and check the validity of their ranges
-    if (find_token(argc, argv, RATE_CONTROL_ENABLE_TOKEN, config_string) == 0 ||
-        find_token(argc, argv, "--rc", config_string) == 0) {
-        rc_mode = strtol(config_string, NULL, 0);
+    if (find_token(argc, argv, RATE_CONTROL_ENABLE_TOKEN, config_string) == 0) {
+        for (size_t i = 0; i < rc_size; i++) {
+            if (!strcmp(config_string, rc[i].name)) {
+                rc_mode = rc[i].mode;
+                break;
+            }
+        }
         if (rc_mode > 2 || rc_mode < 0) {
             fprintf(stderr, "Error: The rate control mode must be [0 - 2] \n");
             return 0;
-        }
-        if (rc_mode == 2) {
-            // this is covered in the library
-            //fprintf(stderr, "[SVT-Warning]: CBR Rate control is currently not supported, switching to VBR \n");
-            rc_mode = 1;
         }
     }
 
@@ -2214,11 +2493,7 @@ uint32_t get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_P
             }
 #else
             struct stat st;
-            if (!stat(config_string, &st)) {
-                if (S_ISFIFO(st.st_mode)) {
-                    using_fifo = 1;
-                }
-            }
+            using_fifo = !stat(config_string, &st) && S_ISFIFO(st.st_mode);
 #endif
         }
     }
@@ -2230,8 +2505,7 @@ uint32_t get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_P
         }
     }
 
-    if ((!find_token(argc, argv, INTRA_PERIOD_TOKEN, NULL) ||
-         !find_token(argc, argv, "-" INTRA_PERIOD_TOKEN, NULL)) &&
+    if (!find_token(argc, argv, INTRA_PERIOD_TOKEN, NULL) &&
         !find_token(argc, argv, KEYINT_TOKEN, NULL)) {
         fprintf(stderr,
                 "[SVT-Warning]: --keyint and --intra-period specified, --keyint will take "
@@ -2239,19 +2513,18 @@ uint32_t get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_P
     }
 
     if (find_token(argc, argv, INTRA_PERIOD_TOKEN, config_string) == 0 ||
-        find_token(argc, argv, "-" INTRA_PERIOD_TOKEN, config_string) == 0 ||
         find_token(argc, argv, KEYINT_TOKEN, config_string) == 0) {
         ip = strtol(config_string, NULL, 0);
         if (find_token(argc, argv, KEYINT_TOKEN, NULL) == 0) {
             fprintf(stderr, "[SVT-Warning]: --keyint is now intra-period + 1!\n");
-            --ip;
+            ip = ip < 0 ? ip : ip - 1;
         } else
             fprintf(stderr, "[SVT-Warning]: --intra-period is deprecated for --keyint\n");
         if ((ip < -2 || ip > 2 * ((1 << 30) - 1)) && rc_mode == 0) {
-            fprintf(stderr, "[SVT-Error]: The intra period must be [-2, 2^31-2]  \n");
+            fprintf(stderr, "[SVT-Error]: The intra period must be [-2, 2^31-2], input %d\n", ip);
             return 0;
         }
-        if ((ip < 0) && rc_mode >= 1) {
+        if ((ip < 0) && rc_mode == 1) {
             fprintf(stderr,
                     "[SVT-Error]: The intra period must be > 0 for RateControlMode %d \n",
                     rc_mode);
@@ -2279,8 +2552,8 @@ uint32_t get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_P
         fprintf(
             stderr,
             "[SVT-Warning]: The number of passes has to be 1 when using a fifo, using 1-pass\n");
-        *multi_pass_mode = SINGLE_PASS;
-        passes           = 1;
+        multi_pass_mode = SINGLE_PASS;
+        passes          = 1;
     }
     // Determine the number of passes in CRF mode
     if (rc_mode == 0) {
@@ -2292,29 +2565,37 @@ uint32_t get_passes(int32_t argc, char *const argv[], EncPass enc_pass[MAX_ENC_P
                 "1-pass encoding\n\n",
                 ip);
         }
-        *multi_pass_mode = passes == 2 ? TWO_PASS_IPP_FINAL : SINGLE_PASS;
+        multi_pass_mode = passes == 2 ? TWO_PASS_IPP_FINAL : SINGLE_PASS;
     }
     // Determine the number of passes in rate control mode
     else if (rc_mode == 1) {
         if (passes == 1)
-            *multi_pass_mode = SINGLE_PASS;
+            multi_pass_mode = SINGLE_PASS;
         else if (passes > 1) {
             if (enc_mode > ENC_M12) {
                 fprintf(stderr,
                         "[SVT-Warning]: Multipass VBR is not supported for preset %d. Switching to "
                         "1-pass encoding\n\n",
                         enc_mode);
-                passes           = 1;
-                *multi_pass_mode = SINGLE_PASS;
+                passes          = 1;
+                multi_pass_mode = SINGLE_PASS;
             } else {
-                passes           = 3;
-                *multi_pass_mode = THREE_PASS_IPP_SAMEPRED_FINAL;
+                passes          = 3;
+                multi_pass_mode = THREE_PASS_IPP_SAMEPRED_FINAL;
             }
         }
+    } else {
+        if (passes > 1) {
+            fprintf(
+                stderr,
+                "[SVT-Warning]: Multipass CBR is not supported. Switching to 1-pass encoding\n\n");
+            passes = 1;
+        }
+        multi_pass_mode = SINGLE_PASS;
     }
 
     // Set the settings for each pass based on multi_pass_mode
-    switch (*multi_pass_mode) {
+    switch (multi_pass_mode) {
     case SINGLE_PASS: enc_pass[0] = ENC_SINGLE_PASS; break;
     case TWO_PASS_IPP_FINAL:
         enc_pass[0] = ENC_FIRST_PASS;
@@ -2339,7 +2620,7 @@ void mark_token_as_read(const char *token, char *cmd_copy[], int32_t *cmd_token_
     }
 }
 
-static EbBool is_negative_number(const char *string) {
+static Bool is_negative_number(const char *string) {
     char *end;
     return strtol(string, &end, 10) < 0 && *end == '\0';
 }
@@ -2368,10 +2649,7 @@ int32_t compute_frames_to_be_encoded(EbConfig *config) {
     if (frame_size == 0)
         return -1;
 
-    if (config->config.encoder_bit_depth == 10 && config->config.compressed_ten_bit_format == 1)
-        frame_count = (int32_t)(2 * ((double)file_size / frame_size) / 1.25);
-    else
-        frame_count = (int32_t)(file_size / frame_size);
+    frame_count = (int32_t)(file_size / frame_size);
 
     if (frame_count == 0)
         return -1;
@@ -2508,15 +2786,17 @@ static int32_t read_pred_struct_file(EbConfig *config, char *PredStructPath,
                                      uint32_t instance_idx) {
     int32_t return_error = 0;
 
-    FOPEN(config->input_pred_struct_file, PredStructPath, "rb");
+    FILE *input_pred_struct_file;
 
-    if (config->input_pred_struct_file != (FILE *)NULL) {
-        int32_t config_file_size   = find_file_size(config->input_pred_struct_file);
+    FOPEN(input_pred_struct_file, PredStructPath, "rb");
+
+    if (input_pred_struct_file) {
+        int32_t config_file_size   = find_file_size(input_pred_struct_file);
         char   *config_file_buffer = (char *)malloc(config_file_size);
 
-        if (config_file_buffer != (char *)NULL) {
+        if (config_file_buffer) {
             int32_t result_size = (int32_t)fread(
-                config_file_buffer, 1, config_file_size, config->input_pred_struct_file);
+                config_file_buffer, 1, config_file_size, input_pred_struct_file);
 
             if (result_size == config_file_size) {
                 parse_pred_struct_file(config, config_file_buffer, config_file_size);
@@ -2530,8 +2810,7 @@ static int32_t read_pred_struct_file(EbConfig *config, char *PredStructPath,
         }
 
         free(config_file_buffer);
-        fclose(config->input_pred_struct_file);
-        config->input_pred_struct_file = (FILE *)NULL;
+        fclose(input_pred_struct_file);
     } else {
         fprintf(stderr,
                 "Error channel %u: Couldn't open Manual Prediction Structure File: %s\n",
@@ -2543,7 +2822,7 @@ static int32_t read_pred_struct_file(EbConfig *config, char *PredStructPath,
     return return_error;
 }
 
-static EbBool warn_legacy_token(const char *const token) {
+static Bool warn_legacy_token(const char *const token) {
     static struct warn_set {
         const char *old_token;
         const char *new_token;
@@ -2566,9 +2845,9 @@ static EbBool warn_legacy_token(const char *const token) {
                 "[SVT-Error]: %s has been removed, use %s instead\n",
                 tok->old_token,
                 tok->new_token);
-        return EB_TRUE;
+        return TRUE;
     }
-    return EB_FALSE;
+    return FALSE;
 }
 
 /******************************************
@@ -2580,19 +2859,31 @@ EbErrorType read_command_line(int32_t argc, char *const argv[], EncChannel *chan
     char        config_string[COMMAND_LINE_MAX_SIZE]; // for one input options
     char       *config_strings[MAX_CHANNEL_NUMBER]; // for multiple input options
     char       *cmd_copy[MAX_NUM_TOKENS]; // keep track of extra tokens
+    char       *arg_copy[MAX_NUM_TOKENS]; // keep track of extra arguments
     uint32_t    index         = 0;
     int32_t     cmd_token_cnt = 0; // total number of tokens
+    int32_t     cmd_arg_cnt   = 0; // total number of arguments
     int32_t     ret_y4m;
 
     for (index = 0; index < MAX_CHANNEL_NUMBER; ++index)
         config_strings[index] = (char *)malloc(sizeof(char) * COMMAND_LINE_MAX_SIZE);
     // Copy tokens (except for CHANNEL_NUMBER_TOKEN and PASSES_TOKEN ) into a temp token buffer hosting all tokens that are passed through the command line
-    size_t len = COMMAND_LINE_MAX_SIZE;
+    size_t len                = COMMAND_LINE_MAX_SIZE;
+    Bool   process_prev_token = 1;
     for (int32_t token_index = 0; token_index < argc; ++token_index) {
-        if ((argv[token_index][0] == '-') &&
-            strncmp(argv[token_index], CHANNEL_NUMBER_TOKEN, len) &&
-            strncmp(argv[token_index], PASSES_TOKEN, len) && !is_negative_number(argv[token_index]))
-            cmd_copy[cmd_token_cnt++] = argv[token_index];
+        if (strncmp(argv[token_index], CHANNEL_NUMBER_TOKEN, len) &&
+            strncmp(argv[token_index], PASSES_TOKEN, len)) {
+            if (!is_negative_number(argv[token_index]) && process_prev_token) {
+                if (argv[token_index][0] == '-')
+                    cmd_copy[cmd_token_cnt++] = argv[token_index];
+                else if (token_index)
+                    arg_copy[cmd_arg_cnt++] = argv[token_index];
+            } else {
+                process_prev_token = 1;
+            }
+        } else {
+            process_prev_token = 0;
+        }
     }
 
     /***************************************************************************************************/
@@ -2604,7 +2895,8 @@ EbErrorType read_command_line(int32_t argc, char *const argv[], EncChannel *chan
         mark_token_as_read(CONFIG_FILE_TOKEN, cmd_copy, &cmd_token_cnt);
         // Parse the config file
         for (index = 0; index < num_channels; ++index) {
-            EncChannel *c   = channels + index;
+            EncChannel *c = channels + index;
+            mark_token_as_read(config_strings[index], arg_copy, &cmd_arg_cnt);
             c->return_error = (EbErrorType)read_config_file(
                 c->config, config_strings[index], index);
             return_error = (EbErrorType)(return_error & c->return_error);
@@ -2614,7 +2906,8 @@ EbErrorType read_command_line(int32_t argc, char *const argv[], EncChannel *chan
         mark_token_as_read(CONFIG_FILE_LONG_TOKEN, cmd_copy, &cmd_token_cnt);
         // Parse the config file
         for (index = 0; index < num_channels; ++index) {
-            EncChannel *c   = channels + index;
+            EncChannel *c = channels + index;
+            mark_token_as_read(config_strings[index], arg_copy, &cmd_arg_cnt);
             c->return_error = (EbErrorType)read_config_file(
                 c->config, config_strings[index], index);
             return_error = (EbErrorType)(return_error & c->return_error);
@@ -2632,17 +2925,27 @@ EbErrorType read_command_line(int32_t argc, char *const argv[], EncChannel *chan
     /********************************************************************************************************/
 
     // Check tokens for invalid tokens
-    for (char *const *indx = argv + 1; *indx; ++indx) {
-        // stop at --
-        if (!strcmp(*indx, "--"))
-            break;
-        // Check removed tokens
-        if (warn_legacy_token(*indx))
-            return EB_ErrorBadParameter;
-        // exclude single letter tokens
-        if ((*indx)[0] == '-' && (*indx)[1] != '-' && (*indx)[2] != '\0') {
-            fprintf(stderr, "[SVT-Error]: single dash long tokens have been removed!\n");
-            return EB_ErrorBadParameter;
+    {
+        bool next_is_value = false;
+        for (char *const *indx = argv + 1; *indx; ++indx) {
+            // stop at --
+            if (!strcmp(*indx, "--"))
+                break;
+            // skip the token if the previous token was an argument
+            // assumes all of our tokens flip flop between being an argument and a value
+            if (next_is_value) {
+                next_is_value = false;
+                continue;
+            }
+            // Check removed tokens
+            if (warn_legacy_token(*indx))
+                return EB_ErrorBadParameter;
+            // exclude single letter tokens
+            if ((*indx)[0] == '-' && (*indx)[1] != '-' && (*indx)[2] != '\0') {
+                fprintf(stderr, "[SVT-Error]: single dash long tokens have been removed!\n");
+                return EB_ErrorBadParameter;
+            }
+            next_is_value = true;
         }
     }
 
@@ -2658,6 +2961,8 @@ EbErrorType read_command_line(int32_t argc, char *const argv[], EncChannel *chan
         for (uint32_t chan = 0; chan < num_channels; ++chan) {
             if (!strcmp(config_strings[chan], " "))
                 break;
+            // Mark the value as found in the temp argument buffer
+            mark_token_as_read(config_strings[chan], arg_copy, &cmd_arg_cnt);
             (entry->scf)(config_strings[chan], channels[chan].config);
         }
     }
@@ -2669,7 +2974,7 @@ EbErrorType read_command_line(int32_t argc, char *const argv[], EncChannel *chan
 
     for (index = 0; index < num_channels; ++index) {
         EncChannel *c = channels + index;
-        if (c->config->y4m_input == EB_TRUE) {
+        if (c->config->y4m_input == TRUE) {
             ret_y4m = read_y4m_header(c->config);
             if (ret_y4m == EB_ErrorBadParameter) {
                 fprintf(stderr, "Error found when reading the y4m file parameters.\n");
@@ -2683,7 +2988,7 @@ EbErrorType read_command_line(int32_t argc, char *const argv[], EncChannel *chan
     for (index = 0; index < num_channels; ++index) {
         EncChannel *c      = channels + index;
         EbConfig   *config = c->config;
-        if (config->config.enable_manual_pred_struct == EB_TRUE) {
+        if (config->config.enable_manual_pred_struct == TRUE) {
             c->return_error = (EbErrorType)read_pred_struct_file(
                 config, config->input_pred_struct_filename, index);
             return_error = (EbErrorType)(return_error & c->return_error);
@@ -2741,6 +3046,20 @@ EbErrorType read_command_line(int32_t argc, char *const argv[], EncChannel *chan
         return_error = EB_ErrorBadParameter;
     }
 
+    if (cmd_arg_cnt > 0) {
+        int32_t arg_copy_index, maybe_token = 0;
+        fprintf(stderr, "Unprocessed arguments: ");
+        for (arg_copy_index = 0; arg_copy_index < cmd_arg_cnt; ++arg_copy_index) {
+            maybe_token |= !!strchr(arg_copy[arg_copy_index], '-');
+            fprintf(stderr, " %s ", arg_copy[arg_copy_index]);
+        }
+        if (maybe_token)
+            fprintf(stderr, "\nMissing spacing between tokens");
+        fprintf(stderr, "\n\n");
+        return_error = EB_ErrorBadParameter;
+    }
+
     for (index = 0; index < MAX_CHANNEL_NUMBER; ++index) free(config_strings[index]);
+
     return return_error;
 }

@@ -52,108 +52,29 @@ typedef struct EbPictureBufferDesc {
     uint16_t stride_bit_inc_cr; // pointer to the V chroma buffer Bit increment
 
     // Picture Parameters
-    uint16_t       origin_x; // Horizontal padding distance
-    uint16_t       origin_y; // Vertical padding distance
-    uint16_t       origin_bot_y; // Vertical bottom padding distance
-    uint16_t       width; // Luma picture width which excludes the padding
-    uint16_t       height; // Luma picture height which excludes the padding
-    uint16_t       max_width; // input Luma picture width
-    uint16_t       max_height; // input Luma picture height
-    EbBitDepthEnum bit_depth; // Pixel Bit Depth
-    EbColorFormat  color_format; // Chroma Subsumpling
+    uint16_t      origin_x; // Horizontal padding distance
+    uint16_t      origin_y; // Vertical padding distance
+    uint16_t      origin_bot_y; // Vertical bottom padding distance
+    uint16_t      width; // Luma picture width which excludes the padding
+    uint16_t      height; // Luma picture height which excludes the padding
+    uint16_t      max_width; // input Luma picture width
+    uint16_t      max_height; // input Luma picture height
+    EbBitDepth    bit_depth; // Pixel Bit Depth
+    EbColorFormat color_format; // Chroma Subsumpling
 
     // Buffer Parameters
     uint32_t luma_size; // Size of the luma buffer
     uint32_t chroma_size; // Size of the chroma buffers
-    EbBool   packed_flag; // Indicates if sample buffers are packed or not
+    Bool     packed_flag; // Indicates if sample buffers are packed or not
 
-    EbBool   film_grain_flag; // Indicates if film grain parameters are present for the frame
+    Bool     film_grain_flag; // Indicates if film grain parameters are present for the frame
     uint32_t buffer_enable_mask;
 
-    EbBool
+    Bool
         is_16bit_pipeline; // internal bit-depth: when equals 1 internal bit-depth is 16bits regardless of the input bit-depth
 } EbPictureBufferDesc;
 
 #define YV12_FLAG_HIGHBITDEPTH 8
-
-/*!\brief List of supported color primaries */
-typedef enum AomColorPrimaries {
-    AOM_CICP_CP_RESERVED_0   = 0, /**< For future use */
-    AOM_CICP_CP_BT_709       = 1, /**< BT.709 */
-    AOM_CICP_CP_UNSPECIFIED  = 2, /**< Unspecified */
-    AOM_CICP_CP_RESERVED_3   = 3, /**< For future use */
-    AOM_CICP_CP_BT_470_M     = 4, /**< BT.470 System M (historical) */
-    AOM_CICP_CP_BT_470_B_G   = 5, /**< BT.470 System b, G (historical) */
-    AOM_CICP_CP_BT_601       = 6, /**< BT.601 */
-    AOM_CICP_CP_SMPTE_240    = 7, /**< SMPTE 240 */
-    AOM_CICP_CP_GENERIC_FILM = 8, /**< Generic film (color filters using illuminant C) */
-    AOM_CICP_CP_BT_2020      = 9, /**< BT.2020, BT.2100 */
-    AOM_CICP_CP_XYZ          = 10, /**< SMPTE 428 (CIE 1921 XYZ) */
-    AOM_CICP_CP_SMPTE_431    = 11, /**< SMPTE RP 431-2 */
-    AOM_CICP_CP_SMPTE_432    = 12, /**< SMPTE EG 432-1  */
-    AOM_CICP_CP_RESERVED_13  = 13, /**< For future use (values 13 - 21)  */
-    AOM_CICP_CP_EBU_3213     = 22, /**< EBU Tech. 3213-E  */
-    AOM_CICP_CP_RESERVED_23  = 23 /**< For future use (values 23 - 255)  */
-} AomColorPrimaries; /**< alias for enum AomColorPrimaries */
-
-/*!\brief List of supported transfer functions */
-typedef enum AomTransferCharacteristics {
-    AOM_CICP_TC_RESERVED_0     = 0, /**< For future use */
-    AOM_CICP_TC_BT_709         = 1, /**< BT.709 */
-    AOM_CICP_TC_UNSPECIFIED    = 2, /**< Unspecified */
-    AOM_CICP_TC_RESERVED_3     = 3, /**< For future use */
-    AOM_CICP_TC_BT_470_M       = 4, /**< BT.470 System M (historical)  */
-    AOM_CICP_TC_BT_470_B_G     = 5, /**< BT.470 System b, G (historical) */
-    AOM_CICP_TC_BT_601         = 6, /**< BT.601 */
-    AOM_CICP_TC_SMPTE_240      = 7, /**< SMPTE 240 M */
-    AOM_CICP_TC_LINEAR         = 8, /**< Linear */
-    AOM_CICP_TC_LOG_100        = 9, /**< Logarithmic (100 : 1 range) */
-    AOM_CICP_TC_LOG_100_SQRT10 = 10, /**< Logarithmic (100 * Sqrt(10) : 1 range) */
-    AOM_CICP_TC_IEC_61966      = 11, /**< IEC 61966-2-4 */
-    AOM_CICP_TC_BT_1361        = 12, /**< BT.1361 */
-    AOM_CICP_TC_SRGB           = 13, /**< sRGB or sYCC*/
-    AOM_CICP_TC_BT_2020_10_BIT = 14, /**< BT.2020 10-bit systems */
-    AOM_CICP_TC_BT_2020_12_BIT = 15, /**< BT.2020 12-bit systems */
-    AOM_CICP_TC_SMPTE_2084     = 16, /**< SMPTE ST 2084, ITU BT.2100 PQ */
-    AOM_CICP_TC_SMPTE_428      = 17, /**< SMPTE ST 428 */
-    AOM_CICP_TC_HLG            = 18, /**< BT.2100 HLG, ARIB STD-B67 */
-    AOM_CICP_TC_RESERVED_19    = 19 /**< For future use (values 19-255) */
-} AomTransferCharacteristics; /**< alias for enum aom_transfer_function */
-
-/*!\brief List of supported matrix coefficients */
-typedef enum AomMatrixCoefficients {
-    AOM_CICP_MC_IDENTITY    = 0, /**< Identity matrix */
-    AOM_CICP_MC_BT_709      = 1, /**< BT.709 */
-    AOM_CICP_MC_UNSPECIFIED = 2, /**< Unspecified */
-    AOM_CICP_MC_RESERVED_3  = 3, /**< For future use */
-    AOM_CICP_MC_FCC         = 4, /**< US FCC 73.628 */
-    AOM_CICP_MC_BT_470_B_G  = 5, /**< BT.470 System b, G (historical) */
-    AOM_CICP_MC_BT_601      = 6, /**< BT.601 */
-    AOM_CICP_MC_SMPTE_240   = 7, /**< SMPTE 240 M */
-    AOM_CICP_MC_SMPTE_YCGCO = 8, /**< YCgCo */
-    AOM_CICP_MC_BT_2020_NCL = 9, /**< BT.2020 non-constant luminance, BT.2100 YCbCr  */
-    AOM_CICP_MC_BT_2020_CL  = 10, /**< BT.2020 constant luminance */
-    AOM_CICP_MC_SMPTE_2085  = 11, /**< SMPTE ST 2085 YDzDx */
-    AOM_CICP_MC_CHROMAT_NCL = 12, /**< Chromaticity-derived non-constant luminance */
-    AOM_CICP_MC_CHROMAT_CL  = 13, /**< Chromaticity-derived constant luminance */
-    AOM_CICP_MC_ICTCP       = 14, /**< BT.2100 ICtCp */
-    AOM_CICP_MC_RESERVED_15 = 15 /**< For future use (values 15-255)  */
-} AomMatrixCoefficients;
-
-/*!\brief List of supported color range */
-typedef enum AomColorRange {
-    AOM_CR_STUDIO_RANGE = 0, /**< Y [16..235], UV [16..240] */
-    AOM_CR_FULL_RANGE   = 1 /**< YUV/RGB [0..255] */
-} AomColorRange; /**< alias for enum AomColorRange */
-
-/*!\brief List of chroma sample positions */
-typedef enum AomChromaSamplePosition {
-    AOM_CSP_UNKNOWN  = 0, /**< Unknown */
-    AOM_CSP_VERTICAL = 1, /**< Horizontally co-located with luma(0, 0)*/
-    /**< sample, between two vertical samples */
-    AOM_CSP_COLOCATED = 2, /**< Co-located with luma(0, 0) sample */
-    AOM_CSP_RESERVED  = 3 /**< Reserved value */
-} AomChromaSamplePosition; /**< alias for enum aom_transfer_function */
 
 typedef struct Yv12BufferConfig {
     union {
@@ -217,28 +138,28 @@ typedef struct Yv12BufferConfig {
     uint8_t *y_buffer_8bit;
     int32_t  buf_8bit_valid;
 
-    uint8_t                   *buffer_alloc;
-    size_t                     buffer_alloc_sz;
-    int32_t                    border;
-    size_t                     frame_size;
-    int32_t                    subsampling_x;
-    int32_t                    subsampling_y;
-    uint32_t                   bit_depth;
-    AomColorPrimaries          color_primaries;
-    AomTransferCharacteristics transfer_characteristics;
-    AomMatrixCoefficients      matrix_coefficients;
-    int32_t                    monochrome;
-    AomChromaSamplePosition    chroma_sample_position;
-    AomColorRange              color_range;
-    int32_t                    render_width;
-    int32_t                    render_height;
+    uint8_t                  *buffer_alloc;
+    size_t                    buffer_alloc_sz;
+    int32_t                   border;
+    size_t                    frame_size;
+    int32_t                   subsampling_x;
+    int32_t                   subsampling_y;
+    uint32_t                  bit_depth;
+    EbColorPrimaries          color_primaries;
+    EbTransferCharacteristics transfer_characteristics;
+    EbMatrixCoefficients      matrix_coefficients;
+    int32_t                   monochrome;
+    EbChromaSamplePosition    chroma_sample_position;
+    EbColorRange              color_range;
+    int32_t                   render_width;
+    int32_t                   render_height;
 
     int32_t corrupted;
     int32_t flags;
 } Yv12BufferConfig;
 
 void link_eb_to_aom_buffer_desc(EbPictureBufferDesc *picBuffDsc, Yv12BufferConfig *aomBuffDsc,
-                                uint16_t pad_right, uint16_t pad_bottom, EbBool is_16bit);
+                                uint16_t pad_right, uint16_t pad_bottom, Bool is_16bit);
 
 void link_eb_to_aom_buffer_desc_8bit(EbPictureBufferDesc *picBuffDsc, Yv12BufferConfig *aomBuffDsc);
 
@@ -279,22 +200,22 @@ typedef int32_t (*AomGetFrameBufferCbFn)(void *priv, size_t min_size, AomCodecFr
  * EbPictureBufferDesc Init Data
  ************************************/
 typedef struct EbPictureBufferDescInitData {
-    uint16_t       max_width;
-    uint16_t       max_height;
-    EbBitDepthEnum bit_depth;
-    EbColorFormat  color_format;
-    uint32_t       buffer_enable_mask;
-    int32_t        rest_units_per_tile;
-    uint16_t       left_padding;
-    uint16_t       right_padding;
-    uint16_t       top_padding;
-    uint16_t       bot_padding;
-    EbBool         split_mode; //ON: allocate 8bit data seperately from nbit data
+    uint16_t      max_width;
+    uint16_t      max_height;
+    EbBitDepth    bit_depth;
+    EbColorFormat color_format;
+    uint32_t      buffer_enable_mask;
+    int32_t       rest_units_per_tile;
+    uint16_t      left_padding;
+    uint16_t      right_padding;
+    uint16_t      top_padding;
+    uint16_t      bot_padding;
+    Bool          split_mode; //ON: allocate 8bit data seperately from nbit data
 
-    EbBool down_sampled_filtered;
+    Bool down_sampled_filtered;
 
     uint8_t mfmv;
-    EbBool  is_16bit_pipeline;
+    Bool    is_16bit_pipeline;
     int8_t  enc_mode;
     int32_t sb_total_count;
 } EbPictureBufferDescInitData;

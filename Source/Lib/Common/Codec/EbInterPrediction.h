@@ -109,13 +109,6 @@ typedef struct WedgeParamsType {
     WedgeMasksType      *masks;
 } WedgeParamsType;
 
-struct ModeDecisionContext;
-
-typedef struct InterPredictionContext {
-    EbDctor                              dctor;
-    MotionCompensationPredictionContext *mcp_context;
-} InterPredictionContext;
-
 void svt_inter_predictor_light_pd0(const uint8_t *src, int32_t src_stride, uint8_t *dst,
                                    int32_t dst_stride, int32_t w, int32_t h,
                                    SubpelParams *subpel_params, ConvolveParams *conv_params);
@@ -148,7 +141,7 @@ void build_masked_compound_no_round(uint8_t *dst, int dst_stride, const CONV_BUF
                                     int src0_stride, const CONV_BUF_TYPE *src1, int src1_stride,
                                     const InterInterCompoundData *const comp_data,
                                     uint8_t *seg_mask, BlockSize sb_type, int h, int w,
-                                    ConvolveParams *conv_params, uint8_t bd, EbBool is_16bit);
+                                    ConvolveParams *conv_params, uint8_t bd, Bool is_16bit);
 
 static const InterpFilterParams av1_interp_4tap[2] = {
     {(const int16_t *)sub_pel_filters_4, SUBPEL_TAPS, SUBPEL_SHIFTS, EIGHTTAP_REGULAR},
@@ -430,7 +423,7 @@ static INLINE PredictionMode compound_ref1_mode(PredictionMode mode) {
     return lut[mode];
 }
 
-static INLINE EbBool is_motion_variation_allowed_bsize(const BlockSize bsize) {
+static INLINE Bool is_motion_variation_allowed_bsize(const BlockSize bsize) {
     return (block_size_wide[bsize] >= 8 && block_size_high[bsize] >= 8);
 }
 
@@ -557,6 +550,12 @@ static INLINE void av1_set_ref_frame(MvReferenceFrame *rf, int8_t ref_frame_type
         rf[1] = NONE_FRAME;
         // assert(ref_frame_type > NONE_FRAME); AMIR
     }
+}
+static INLINE PredDirection av1_get_pred_dir(int8_t ref_frame_type) {
+    static uint8_t   ref_type_to_list_idx[REFS_PER_FRAME + 1] = {0, 0, 0, 0, 0, 1, 1, 1};
+    MvReferenceFrame rf[2];
+    av1_set_ref_frame(rf, ref_frame_type);
+    return (rf[1] == NONE_FRAME) ? (PredDirection)ref_type_to_list_idx[rf[0]] : BI_PRED;
 }
 int svt_av1_skip_u4x4_pred_in_obmc(BlockSize bsize, int dir, int subsampling_x, int subsampling_y);
 

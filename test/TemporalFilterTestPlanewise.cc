@@ -1180,7 +1180,12 @@ INSTANTIATE_TEST_CASE_P(
             svt_av1_apply_temporal_filter_planewise_fast_hbd_avx2_wraper),
         ::testing::Values(0, 1)));
 
-#if TUNE_REDESIGN_TF_CTRLS
+typedef void (*get_final_filtered_pixels_fn)(
+    struct MeContext *context_ptr, EbByte *src_center_ptr_start,
+    uint16_t **altref_buffer_highbd_start, uint32_t **accum, uint16_t **count,
+    const uint32_t *stride, int blk_y_src_offset, int blk_ch_src_offset,
+    uint16_t blk_width_ch, uint16_t blk_height_ch, Bool is_highbd);
+
 class TemporalFilterTestGetFinalFilteredPixels : public ::testing::Test {
   private:
     uint32_t width;
@@ -1246,11 +1251,14 @@ class TemporalFilterTestGetFinalFilteredPixels : public ::testing::Test {
         }
     }
 
-    void SetRandData() {
+    void SetRandData(Bool is_highbd) {
         for (int color_channel = 0; color_channel < 3; ++color_channel) {
             for (int i = 0; i < BH * BW; ++i) {
-                accum[color_channel][i] =
-                    rand() % 1024;  //(uint8_t)(rand() % 256);;
+                if (is_highbd) {
+                    accum[color_channel][i] = rand() % 1024;
+                } else {
+                    accum[color_channel][i] = rand() % 256;
+                }
                 uint16_t rand16 = rand() % 256;
                 if (rand16 == 0) {
                     rand16 = 1;
@@ -1264,13 +1272,13 @@ class TemporalFilterTestGetFinalFilteredPixels : public ::testing::Test {
         context_ptr->tf_chroma = rand() % 2;
     }
 
-    void RunTest(EbBool is_highbd) {
+    void RunTest(Bool is_highbd, get_final_filtered_pixels_fn tst_fn) {
         int blk_y_src_offset = 1;
         int blk_ch_src_offset = 2;
         uint16_t blk_width_ch = 48;
         uint16_t blk_height_ch = 61;
 
-        SetRandData();
+        SetRandData(is_highbd);
 
         get_final_filtered_pixels_c(context_ptr,
                                     org_src_center_ptr_start,
@@ -1284,17 +1292,17 @@ class TemporalFilterTestGetFinalFilteredPixels : public ::testing::Test {
                                     blk_height_ch,
                                     is_highbd);
 
-        get_final_filtered_pixels_avx2(context_ptr,
-                                       ref_src_center_ptr_start,
-                                       ref_altref_buffer_highbd_start,
-                                       accum,
-                                       count,
-                                       width_stride,
-                                       blk_y_src_offset,
-                                       blk_ch_src_offset,
-                                       blk_width_ch,
-                                       blk_height_ch,
-                                       is_highbd);
+        tst_fn(context_ptr,
+               ref_src_center_ptr_start,
+               ref_altref_buffer_highbd_start,
+               accum,
+               count,
+               width_stride,
+               blk_y_src_offset,
+               blk_ch_src_offset,
+               blk_width_ch,
+               blk_height_ch,
+               is_highbd);
 
         for (int color_channel = 0; color_channel < 3; ++color_channel) {
             EXPECT_EQ(memcmp(org_src_center_ptr_start[color_channel],
@@ -1310,26 +1318,48 @@ class TemporalFilterTestGetFinalFilteredPixels : public ::testing::Test {
     }
 };
 
-TEST_F(TemporalFilterTestGetFinalFilteredPixels, test_lbd) {
+TEST_F(TemporalFilterTestGetFinalFilteredPixels, test_lbd_sse4_1) {
     for (int i = 0; i < 100; ++i) {
-        RunTest(false);
+        RunTest(false, get_final_filtered_pixels_sse4_1);
     }
 }
 
-TEST_F(TemporalFilterTestGetFinalFilteredPixels, test_hbd) {
+TEST_F(TemporalFilterTestGetFinalFilteredPixels, test_lbd_avx2) {
     for (int i = 0; i < 100; ++i) {
-        RunTest(true);
+        RunTest(false, get_final_filtered_pixels_avx2);
     }
 }
 
-#if SS_OPT_TF2_ME_COPY
+TEST_F(TemporalFilterTestGetFinalFilteredPixels, test_hbd_sse4_1) {
+    for (int i = 0; i < 100; ++i) {
+        RunTest(true, get_final_filtered_pixels_sse4_1);
+    }
+}
+
+TEST_F(TemporalFilterTestGetFinalFilteredPixels, test_hbd_avx2) {
+    for (int i = 0; i < 100; ++i) {
+        RunTest(true, get_final_filtered_pixels_avx2);
+    }
+}
+
+typedef void (*apply_filtering_central_fn)(
+    struct MeContext *context_ptr,
+    EbPictureBufferDesc *input_picture_ptr_central, EbByte *src,
+    uint32_t **accum, uint16_t **count, uint16_t blk_width, uint16_t blk_height,
+    uint32_t ss_x, uint32_t ss_y);
+
+typedef void (*apply_filtering_central_highbd_fn)(
+    struct MeContext *context_ptr,
+    EbPictureBufferDesc *input_picture_ptr_central, uint16_t **src_16bit,
+    uint32_t **accum, uint16_t **count, uint16_t blk_width, uint16_t blk_height,
+    uint32_t ss_x, uint32_t ss_y);
 
 class TemporalFilterTestApplyFilteringCentral : public ::testing::Test {
   private:
     uint32_t width;
     uint32_t height;
     EbByte src[3];
-    size_t src_size;
+    int src_size;
     uint16_t *src_highbd[3];
     size_t src_highbd_size;
 
@@ -1395,9 +1425,8 @@ class TemporalFilterTestApplyFilteringCentral : public ::testing::Test {
         input_picture_central.stride_y = BW + 5;
     }
 
-    void RunTest(EbBool is_highbd) {
-        int blk_y_src_offset = 1;
-        int blk_ch_src_offset = 2;
+    void RunTest(Bool is_highbd, apply_filtering_central_fn lbd_fn_ptr,
+                 apply_filtering_central_highbd_fn hbd_fn_ptr) {
         uint16_t blk_width_ch = 48;
         uint16_t blk_height_ch = 61;
         uint32_t ss_x = rand() % 2;
@@ -1405,6 +1434,7 @@ class TemporalFilterTestApplyFilteringCentral : public ::testing::Test {
         SetRandData();
 
         if (!is_highbd) {
+            assert(lbd_fn_ptr);
             apply_filtering_central_c(context_ptr,
                                       &input_picture_central,
                                       src,
@@ -1414,16 +1444,17 @@ class TemporalFilterTestApplyFilteringCentral : public ::testing::Test {
                                       blk_height_ch,
                                       ss_x,
                                       ss_y);
-            apply_filtering_central_avx2(context_ptr,
-                                         &input_picture_central,
-                                         src,
-                                         ref_accum,
-                                         ref_count,
-                                         blk_width_ch,
-                                         blk_height_ch,
-                                         ss_x,
-                                         ss_y);
+            lbd_fn_ptr(context_ptr,
+                       &input_picture_central,
+                       src,
+                       ref_accum,
+                       ref_count,
+                       blk_width_ch,
+                       blk_height_ch,
+                       ss_x,
+                       ss_y);
         } else {
+            assert(hbd_fn_ptr);
             apply_filtering_central_highbd_c(context_ptr,
                                              &input_picture_central,
                                              src_highbd,
@@ -1433,15 +1464,15 @@ class TemporalFilterTestApplyFilteringCentral : public ::testing::Test {
                                              blk_height_ch,
                                              ss_x,
                                              ss_y);
-            apply_filtering_central_highbd_avx2(context_ptr,
-                                                &input_picture_central,
-                                                src_highbd,
-                                                ref_accum,
-                                                ref_count,
-                                                blk_width_ch,
-                                                blk_height_ch,
-                                                ss_x,
-                                                ss_y);
+            hbd_fn_ptr(context_ptr,
+                       &input_picture_central,
+                       src_highbd,
+                       ref_accum,
+                       ref_count,
+                       blk_width_ch,
+                       blk_height_ch,
+                       ss_x,
+                       ss_y);
         }
 
         for (int color_channel = 0; color_channel < 3; ++color_channel) {
@@ -1458,16 +1489,206 @@ class TemporalFilterTestApplyFilteringCentral : public ::testing::Test {
     }
 };
 
-TEST_F(TemporalFilterTestApplyFilteringCentral, test_lbd) {
+TEST_F(TemporalFilterTestApplyFilteringCentral, test_lbd_sse4_1) {
     for (int i = 0; i < 100; ++i) {
-        RunTest(false);
+        RunTest(false, apply_filtering_central_sse4_1, NULL);
     }
 }
 
-TEST_F(TemporalFilterTestApplyFilteringCentral, test_hbd) {
+TEST_F(TemporalFilterTestApplyFilteringCentral, test_lbd_avx2) {
     for (int i = 0; i < 100; ++i) {
-        RunTest(true);
+        RunTest(false, apply_filtering_central_avx2, NULL);
     }
 }
-#endif /*SS_OPT_TF2_ME_COPY*/
-#endif /*TUNE_REDESIGN_TF_CTRLS*/
+
+TEST_F(TemporalFilterTestApplyFilteringCentral, test_hbd_sse4_1) {
+    for (int i = 0; i < 100; ++i) {
+        RunTest(true, NULL, apply_filtering_central_highbd_sse4_1);
+    }
+}
+
+TEST_F(TemporalFilterTestApplyFilteringCentral, test_hbd_avx2) {
+    for (int i = 0; i < 100; ++i) {
+        RunTest(true, NULL, apply_filtering_central_highbd_avx2);
+    }
+}
+
+int32_t estimate_noise_fp16_c_wrapper(const uint16_t *src, int width,
+                                      int height, int stride, int bd) {
+    UNUSED(bd);
+    return svt_estimate_noise_fp16_c(
+        (const uint8_t *)src, width, height, stride);
+}
+int32_t estimate_noise_fp16_avx2_wrapper(const uint16_t *src, int width,
+                                         int height, int stride, int bd) {
+    UNUSED(bd);
+    return svt_estimate_noise_fp16_avx2(
+        (const uint8_t *)src, width, height, stride);
+}
+
+typedef int32_t (*EstimateNoiseFuncFP)(const uint16_t *src, int width,
+                                       int height, int stride, int bd);
+
+typedef std::tuple<EstimateNoiseFuncFP, EstimateNoiseFuncFP, int, int, int>
+    EstimateNoiseParamFP;
+class EstimateNoiseTestFP
+    : public ::testing::TestWithParam<EstimateNoiseParamFP> {
+  public:
+    EstimateNoiseTestFP() : rnd_(0, (1 << TEST_GET_PARAM(4)) - 1){};
+    ~EstimateNoiseTestFP() {
+    }
+
+    void SetUp() {
+        ref_func = TEST_GET_PARAM(0);
+        tst_func = TEST_GET_PARAM(1);
+        width = TEST_GET_PARAM(2);
+        height = TEST_GET_PARAM(3);
+        encoder_bit_depth = TEST_GET_PARAM(4);
+        src_ptr = reinterpret_cast<uint16_t *>(
+            svt_aom_memalign(8, 4000 * 2500 * sizeof(uint16_t)));
+        GenRandomData(4000 * 2500);
+    }
+
+    void TearDown() {
+        svt_aom_free(src_ptr);
+    }
+    void RunTest() {
+        for (int i = 0; i < 10; i++) {
+            stride = width + rnd_.random() % 100;
+            int32_t ref_out =
+                ref_func(src_ptr, width, height, stride, encoder_bit_depth);
+            int32_t tst_out =
+                tst_func(src_ptr, width, height, stride, encoder_bit_depth);
+
+            EXPECT_EQ(ref_out, tst_out);
+        }
+    }
+
+    void GenRandomData(int size) {
+        if (encoder_bit_depth == 8) {
+            for (int ii = 0; ii < size; ii++)
+                src_ptr[ii] = rnd_.Rand16();
+        } else
+            for (int ii = 0; ii < size; ii++)
+                src_ptr[ii] = rnd_.random();
+    }
+
+  private:
+    EstimateNoiseFuncFP ref_func;
+    EstimateNoiseFuncFP tst_func;
+    SVTRandom rnd_;
+    uint16_t *src_ptr;
+    int width;
+    int height;
+    uint32_t encoder_bit_depth;
+    int stride;
+};
+
+TEST_P(EstimateNoiseTestFP, fixed_point) {
+    RunTest();
+}
+
+INSTANTIATE_TEST_CASE_P(
+    AVX2_lbd, EstimateNoiseTestFP,
+    ::testing::Combine(::testing::Values(estimate_noise_fp16_c_wrapper),
+                       ::testing::Values(estimate_noise_fp16_avx2_wrapper),
+                       ::testing::Values(3840, 1920, 1280, 800, 640, 360),
+                       ::testing::Values(2160, 1080, 720, 600, 480, 240),
+                       ::testing::Values(8)));
+
+INSTANTIATE_TEST_CASE_P(
+    AVX2_hbd, EstimateNoiseTestFP,
+    ::testing::Combine(::testing::Values(svt_estimate_noise_highbd_fp16_c),
+                       ::testing::Values(svt_estimate_noise_highbd_fp16_avx2),
+                       ::testing::Values(3840, 1920, 1280, 800, 640, 360),
+                       ::testing::Values(2160, 1080, 720, 600, 480, 240),
+                       ::testing::Values(10, 12)));
+
+double estimate_noise_c_wrapper(const uint16_t *src, int width, int height,
+                                int stride, int bd) {
+    UNUSED(bd);
+    return svt_estimate_noise_c((const uint8_t *)src, width, height, stride);
+}
+double estimate_noise_avx2_wrapper(const uint16_t *src, int width, int height,
+                                   int stride, int bd) {
+    UNUSED(bd);
+    return svt_estimate_noise_avx2((const uint8_t *)src, width, height, stride);
+}
+
+typedef double (*EstimateNoiseFuncDbl)(const uint16_t *src, int width,
+                                       int height, int stride, int bd);
+
+typedef std::tuple<EstimateNoiseFuncDbl, EstimateNoiseFuncDbl, int, int, int>
+    EstimateNoiseParamDbl;
+class EstimateNoiseTestDbl
+    : public ::testing::TestWithParam<EstimateNoiseParamDbl> {
+  public:
+    EstimateNoiseTestDbl() : rnd_(0, (1 << TEST_GET_PARAM(4)) - 1){};
+    ~EstimateNoiseTestDbl() {
+    }
+
+    void SetUp() {
+        ref_func = TEST_GET_PARAM(0);
+        tst_func = TEST_GET_PARAM(1);
+        width = TEST_GET_PARAM(2);
+        height = TEST_GET_PARAM(3);
+        encoder_bit_depth = TEST_GET_PARAM(4);
+        src_ptr = reinterpret_cast<uint16_t *>(
+            svt_aom_memalign(8, 4000 * 2500 * sizeof(uint16_t)));
+        GenRandomData(4000 * 2500);
+    }
+
+    void TearDown() {
+        svt_aom_free(src_ptr);
+    }
+    void RunTest() {
+        for (int i = 0; i < 10; i++) {
+            stride = width + rnd_.random() % 100;
+            double ref_out =
+                ref_func(src_ptr, width, height, stride, encoder_bit_depth);
+            double tst_out =
+                tst_func(src_ptr, width, height, stride, encoder_bit_depth);
+
+            EXPECT_EQ(ref_out, tst_out);
+        }
+    }
+
+    void GenRandomData(int size) {
+        if (encoder_bit_depth == 8) {
+            for (int ii = 0; ii < size; ii++)
+                src_ptr[ii] = rnd_.Rand16();
+        } else
+            for (int ii = 0; ii < size; ii++)
+                src_ptr[ii] = rnd_.random();
+    }
+
+  private:
+    EstimateNoiseFuncDbl ref_func;
+    EstimateNoiseFuncDbl tst_func;
+    SVTRandom rnd_;
+    uint16_t *src_ptr;
+    int width;
+    int height;
+    uint32_t encoder_bit_depth;
+    int stride;
+};
+
+TEST_P(EstimateNoiseTestDbl, double) {
+    RunTest();
+}
+
+INSTANTIATE_TEST_CASE_P(
+    AVX2_lbd, EstimateNoiseTestDbl,
+    ::testing::Combine(::testing::Values(estimate_noise_c_wrapper),
+                       ::testing::Values(estimate_noise_avx2_wrapper),
+                       ::testing::Values(3840, 1920, 1280, 800, 640, 360),
+                       ::testing::Values(2160, 1080, 720, 600, 480, 240),
+                       ::testing::Values(8)));
+
+INSTANTIATE_TEST_CASE_P(
+    AVX2_hbd, EstimateNoiseTestDbl,
+    ::testing::Combine(::testing::Values(svt_estimate_noise_highbd_c),
+                       ::testing::Values(svt_estimate_noise_highbd_avx2),
+                       ::testing::Values(3840, 1920, 1280, 800, 640, 360),
+                       ::testing::Values(2160, 1080, 720, 600, 480, 240),
+                       ::testing::Values(10, 12)));

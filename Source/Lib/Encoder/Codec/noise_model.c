@@ -18,8 +18,6 @@
 #include "EbLog.h"
 #include "aom_dsp_rtcd.h"
 
-#define kLowPolyNumParams 3
-
 static const int32_t k_max_lag = 4;
 
 void *svt_aom_memalign(size_t align, size_t size);
@@ -245,7 +243,8 @@ void svt_aom_noise_strength_lut_free(AomNoiseStrengthLut *lut) {
     if (!lut)
         return;
     free(lut->points);
-    memset(lut, 0, sizeof(*lut));
+    lut->points     = NULL;
+    lut->num_points = 0;
 }
 
 static double noise_strength_solver_get_bin_index(const AomNoiseStrengthSolver *solver,
@@ -477,59 +476,10 @@ void svt_aom_flat_block_finder_free(AomFlatBlockFinder *block_finder) {
     memset(block_finder, 0, sizeof(*block_finder));
 }
 
-// Matrix multiply
-static INLINE void multiply_mat_1_n_3(const double *m1, const double *m2, double *res,
-                                      const int32_t inner_dim) {
-    double  sum0 = 0, sum1 = 0, sum2 = 0;
-    int32_t inner_m3 = 0;
-
-    for (int32_t inner = 0; inner < inner_dim; ++inner, inner_m3 += 3) {
-        const double m1_inner = m1[inner];
-        sum0 += m1_inner * m2[inner_m3 + 0];
-        sum1 += m1_inner * m2[inner_m3 + 1];
-        sum2 += m1_inner * m2[inner_m3 + 2];
-    }
-
-    *(res++) = sum0;
-    *(res++) = sum1;
-    *(res++) = sum2;
-}
-
-static INLINE void multiply_mat_3_3_1(const double *m1, const double *m2, double *res) {
-    double sum0, sum1, sum2;
-
-    sum0 = m1[0 * 3 + 0] * m2[0 * 1 + 0];
-    sum0 += m1[0 * 3 + 1] * m2[1 * 1 + 0];
-    sum0 += m1[0 * 3 + 2] * m2[2 * 1 + 0];
-    *(res++) = sum0;
-
-    sum1 = m1[1 * 3 + 0] * m2[0 * 1 + 0];
-    sum1 += m1[1 * 3 + 1] * m2[1 * 1 + 0];
-    sum1 += m1[1 * 3 + 2] * m2[2 * 1 + 0];
-    *(res++) = sum1;
-
-    sum2 = m1[2 * 3 + 0] * m2[0 * 1 + 0];
-    sum2 += m1[2 * 3 + 1] * m2[1 * 1 + 0];
-    sum2 += m1[2 * 3 + 2] * m2[2 * 1 + 0];
-    *(res++) = sum2;
-}
-
-static INLINE void multiply_mat_n_3_1(const double *m1, const double *m2, double *res,
-                                      const int32_t m1_rows) {
-    int32_t row_m3 = 0;
-
-    for (int32_t row = 0; row < m1_rows; ++row, row_m3 += 3) {
-        double sum = m1[row_m3 + 0] * m2[0 * 1 + 0];
-        sum += m1[row_m3 + 1] * m2[1 * 1 + 0];
-        sum += m1[row_m3 + 2] * m2[2 * 1 + 0];
-        *(res++) = sum;
-    }
-}
-
-void svt_aom_flat_block_finder_extract_block(const AomFlatBlockFinder *block_finder,
-                                             const uint8_t *const data, int32_t w, int32_t h,
-                                             int32_t stride, int32_t offsx, int32_t offsy,
-                                             double *plane, double *block) {
+void svt_aom_flat_block_finder_extract_block_c(const AomFlatBlockFinder *block_finder,
+                                               const uint8_t *const data, int32_t w, int32_t h,
+                                               int32_t stride, int32_t offsx, int32_t offsy,
+                                               double *plane, double *block) {
     const int32_t block_size = block_finder->block_size;
     const int32_t n          = block_size * block_size;
     const double *A          = block_finder->A;
@@ -826,6 +776,51 @@ void svt_aom_noise_model_free(AomNoiseModel *model) {
 EXTRACT_AR_ROW(uint8_t, lowbd);
 EXTRACT_AR_ROW(uint16_t, highbd);
 
+void svt_av1_add_block_observations_internal_c(uint32_t n, const double val,
+                                               const double recp_sqr_norm, double *buffer,
+                                               double *buffer_norm, double *b, double *A) {
+    uint32_t i;
+    for (i = 0; i + 8 - 1 < n; i += 8) {
+        buffer_norm[i + 0] = buffer[i + 0] * recp_sqr_norm;
+        buffer_norm[i + 1] = buffer[i + 1] * recp_sqr_norm;
+        buffer_norm[i + 2] = buffer[i + 2] * recp_sqr_norm;
+        buffer_norm[i + 3] = buffer[i + 3] * recp_sqr_norm;
+        buffer_norm[i + 4] = buffer[i + 4] * recp_sqr_norm;
+        buffer_norm[i + 5] = buffer[i + 5] * recp_sqr_norm;
+        buffer_norm[i + 6] = buffer[i + 6] * recp_sqr_norm;
+        buffer_norm[i + 7] = buffer[i + 7] * recp_sqr_norm;
+        b[i + 0] += buffer_norm[i + 0] * val;
+        b[i + 1] += buffer_norm[i + 1] * val;
+        b[i + 2] += buffer_norm[i + 2] * val;
+        b[i + 3] += buffer_norm[i + 3] * val;
+        b[i + 4] += buffer_norm[i + 4] * val;
+        b[i + 5] += buffer_norm[i + 5] * val;
+        b[i + 6] += buffer_norm[i + 6] * val;
+        b[i + 7] += buffer_norm[i + 7] * val;
+    }
+    for (; i < n; ++i) {
+        buffer_norm[i] = buffer[i] * recp_sqr_norm;
+        b[i] += buffer_norm[i] * val;
+    }
+
+    for (i = 0; i < n; ++i) {
+        uint32_t     j             = 0;
+        const double buffer_norm_i = buffer_norm[i];
+
+        for (j = 0; j + 8 - 1 < n; j += 8) {
+            A[i * n + j + 0] += (buffer_norm_i * buffer[j + 0]);
+            A[i * n + j + 1] += (buffer_norm_i * buffer[j + 1]);
+            A[i * n + j + 2] += (buffer_norm_i * buffer[j + 2]);
+            A[i * n + j + 3] += (buffer_norm_i * buffer[j + 3]);
+            A[i * n + j + 4] += (buffer_norm_i * buffer[j + 4]);
+            A[i * n + j + 5] += (buffer_norm_i * buffer[j + 5]);
+            A[i * n + j + 6] += (buffer_norm_i * buffer[j + 6]);
+            A[i * n + j + 7] += (buffer_norm_i * buffer[j + 7]);
+        }
+        for (; j < n; ++j) { A[i * n + j] += (buffer_norm_i * buffer[j]); }
+    }
+}
+
 static int32_t add_block_observations(AomNoiseModel *noise_model, int32_t c,
                                       const uint8_t *const data, const uint8_t *const denoised,
                                       int32_t w, int32_t h, int32_t stride, int32_t sub_log2[2],
@@ -875,7 +870,6 @@ static int32_t add_block_observations(AomNoiseModel *noise_model, int32_t c,
                       : ((block_size >> sub_log2[0]) - lag));
             for (int32_t y = y_start; y < y_end; ++y) {
                 for (int32_t x = x_start; x < x_end; ++x) {
-                    int32_t      i   = 0;
                     const double val = noise_model->params.use_highbd
                         ? extract_ar_row_highbd(noise_model->coords,
                                                 num_coords,
@@ -902,49 +896,14 @@ static int32_t add_block_observations(AomNoiseModel *noise_model, int32_t c,
                                                y + y_o,
                                                buffer);
 
-                    for (i = 0; i + 8 - 1 < n; i += 8) {
-                        buffer_norm[i + 0] = buffer[i + 0] * recp_sqr_norm;
-                        buffer_norm[i + 1] = buffer[i + 1] * recp_sqr_norm;
-                        buffer_norm[i + 2] = buffer[i + 2] * recp_sqr_norm;
-                        buffer_norm[i + 3] = buffer[i + 3] * recp_sqr_norm;
-                        buffer_norm[i + 4] = buffer[i + 4] * recp_sqr_norm;
-                        buffer_norm[i + 5] = buffer[i + 5] * recp_sqr_norm;
-                        buffer_norm[i + 6] = buffer[i + 6] * recp_sqr_norm;
-                        buffer_norm[i + 7] = buffer[i + 7] * recp_sqr_norm;
-                        b[i + 0] += buffer_norm[i + 0] * val;
-                        b[i + 1] += buffer_norm[i + 1] * val;
-                        b[i + 2] += buffer_norm[i + 2] * val;
-                        b[i + 3] += buffer_norm[i + 3] * val;
-                        b[i + 4] += buffer_norm[i + 4] * val;
-                        b[i + 5] += buffer_norm[i + 5] * val;
-                        b[i + 6] += buffer_norm[i + 6] * val;
-                        b[i + 7] += buffer_norm[i + 7] * val;
-                    }
-                    for (; i < n; ++i) {
-                        buffer_norm[i] = buffer[i] * recp_sqr_norm;
-                        b[i] += buffer_norm[i] * val;
-                    }
-
-                    for (i = 0; i < n; ++i) {
-                        int32_t      j             = 0;
-                        const double buffer_norm_i = buffer_norm[i];
-
-                        for (j = 0; j + 8 - 1 < n; j += 8) {
-                            A[i * n + j + 0] += (buffer_norm_i * buffer[j + 0]);
-                            A[i * n + j + 1] += (buffer_norm_i * buffer[j + 1]);
-                            A[i * n + j + 2] += (buffer_norm_i * buffer[j + 2]);
-                            A[i * n + j + 3] += (buffer_norm_i * buffer[j + 3]);
-                            A[i * n + j + 4] += (buffer_norm_i * buffer[j + 4]);
-                            A[i * n + j + 5] += (buffer_norm_i * buffer[j + 5]);
-                            A[i * n + j + 6] += (buffer_norm_i * buffer[j + 6]);
-                            A[i * n + j + 7] += (buffer_norm_i * buffer[j + 7]);
-                        }
-                        for (; j < n; ++j) { A[i * n + j] += (buffer_norm_i * buffer[j]); }
-                    }
-
-                    noise_model->latest_state[c].num_observations++;
+                    svt_av1_add_block_observations_internal(
+                        n, val, recp_sqr_norm, buffer, buffer_norm, b, A);
                 }
             }
+            //There is situation when x_start is greater than x_end,
+            //use max() to cap negative result and do not increment num_observations
+            noise_model->latest_state[c].num_observations += AOMMAX((y_end - y_start), 0) *
+                AOMMAX((x_end - x_start), 0);
         }
     }
     EB_FREE_ALIGNED(buffer);
@@ -1128,7 +1087,7 @@ AomNoiseStatus svt_aom_noise_model_update(AomNoiseModel *const noise_model,
             if (is_chroma) {
                 set_chroma_coefficient_fallback_soln(&noise_model->latest_state[channel].eqns);
             } else {
-                SVT_INFO("Solving latest noise equation system failed %d!\n", channel);
+                //SVT_INFO("Solving latest noise equation system failed %d!\n", channel);
                 return AOM_NOISE_STATUS_INSUFFICIENT_NOISE_PIXELS;
             }
         }
@@ -1219,7 +1178,7 @@ int32_t svt_aom_noise_model_get_grain_parameters(AomNoiseModel *const noise_mode
     film_grain->ar_coeff_lag = noise_model->params.lag;
 
     // Convert the scaling functions to 8 bit values
-    AomNoiseStrengthLut scaling_points[3];
+    AomNoiseStrengthLut scaling_points[3] = {{.points = NULL, .num_points = 0}};
     svt_aom_noise_strength_solver_fit_piecewise(
         &noise_model->combined_state[0].strength_solver, 14, scaling_points + 0);
     svt_aom_noise_strength_solver_fit_piecewise(
@@ -1309,9 +1268,9 @@ int32_t svt_aom_noise_model_get_grain_parameters(AomNoiseModel *const noise_mode
         7 - (int32_t)AOMMAX(1 + floor(log2(max_coeff)), ceil(log2(-min_coeff))), 6, 9);
     double   scale_ar_coeff = 1 << film_grain->ar_coeff_shift;
     int32_t *ar_coeffs[3]   = {
-        film_grain->ar_coeffs_y,
-        film_grain->ar_coeffs_cb,
-        film_grain->ar_coeffs_cr,
+          film_grain->ar_coeffs_y,
+          film_grain->ar_coeffs_cb,
+          film_grain->ar_coeffs_cr,
     };
     for (int32_t c = 0; c < 3; ++c) {
         AomEquationSystem *eqns = &noise_model->combined_state[c].eqns;
@@ -1340,8 +1299,12 @@ int32_t svt_aom_noise_model_get_grain_parameters(AomNoiseModel *const noise_mode
     return 1;
 }
 
-static void pointwise_multiply(const float *a, float *b, int32_t n) {
-    for (int32_t i = 0; i < n; ++i) b[i] *= a[i];
+void svt_av1_pointwise_multiply_c(const float *a, float *b, float *c, double *b_d, double *c_d,
+                                  int32_t n) {
+    for (int32_t i = 0; i < n; i++) {
+        b[i] = a[i] * (float)b_d[i];
+        c[i] = a[i] * (float)c_d[i];
+    }
 }
 
 //window_function[y * block_size + x] = (float)(cos((.5 + y) * PI / block_size - PI / 2) * cos((.5 + x) * PI / block_size - PI / 2));
@@ -2222,6 +2185,17 @@ static const float *get_half_cos_window(int32_t block_size) {
 DITHER_AND_QUANTIZE(uint8_t, lowbd);
 DITHER_AND_QUANTIZE(uint16_t, highbd);
 
+void svt_av1_apply_window_function_to_plane_c(int32_t y_size, int32_t x_size, float *result_ptr,
+                                              uint32_t result_stride, float *block, float *plane,
+                                              const float *window_function) {
+    for (int32_t y = 0; y < y_size; ++y) {
+        for (int32_t x = 0; x < x_size; ++x) {
+            result_ptr[y * result_stride + x] += (block[y * x_size + x] + plane[y * x_size + x]) *
+                window_function[y * x_size + x];
+        }
+    }
+}
+
 int32_t svt_aom_wiener_denoise_2d(const uint8_t *const data[3], uint8_t *denoised[3], int32_t w,
                                   int32_t h, int32_t stride[3], int32_t chroma_sub[2],
                                   float noise_psd[3], int32_t block_size, int32_t bit_depth,
@@ -2303,31 +2277,26 @@ int32_t svt_aom_wiener_denoise_2d(const uint8_t *const data[3], uint8_t *denoise
                             by * (block_size >> chroma_sub_h) + offsy,
                             plane_d,
                             block_d);
-                        for (int32_t j = 0; j < pixels_per_block; ++j) {
-                            block[j] = (float)block_d[j];
-                            plane[j] = (float)plane_d[j];
-                        }
-                        pointwise_multiply(window_function, block, pixels_per_block);
+                        svt_av1_pointwise_multiply(
+                            window_function, plane, block, plane_d, block_d, pixels_per_block);
                         svt_aom_noise_tx_forward(tx, block);
-                        svt_aom_noise_tx_filter(tx, noise_psd[c]);
+                        svt_aom_noise_tx_filter(tx->block_size, tx->tx_block, noise_psd[c]);
                         svt_aom_noise_tx_inverse(tx, block);
 
                         // Apply window function to the plane approximation (we will apply
                         // it to the sum of plane + block when composing the results).
-                        pointwise_multiply(window_function, plane, pixels_per_block);
 
-                        for (int32_t y = 0; y < (block_size >> chroma_sub_h); ++y) {
-                            const int32_t y_result = y + (by + 1) * (block_size >> chroma_sub_h) +
-                                offsy;
-                            for (int32_t x = 0; x < (block_size >> chroma_sub_w); ++x) {
-                                const int32_t x_result = x +
-                                    (bx + 1) * (block_size >> chroma_sub_w) + offsx;
-                                result[y_result * result_stride + x_result] +=
-                                    (block[y * (block_size >> chroma_sub_w) + x] +
-                                     plane[y * (block_size >> chroma_sub_w) + x]) *
-                                    window_function[y * (block_size >> chroma_sub_w) + x];
-                            }
-                        }
+                        const int y_size  = (block_size >> chroma_sub_h);
+                        const int x_size  = (block_size >> chroma_sub_w);
+                        float *result_ptr = result + ((by + 1) * y_size + offsy) * result_stride +
+                            (bx + 1) * x_size + offsx;
+                        svt_av1_apply_window_function_to_plane(y_size,
+                                                               x_size,
+                                                               result_ptr,
+                                                               result_stride,
+                                                               block,
+                                                               plane,
+                                                               window_function);
                     }
                 }
             }
@@ -2396,7 +2365,7 @@ static void denoise_and_model_dctor(EbPtr p) {
 EbErrorType denoise_and_model_ctor(AomDenoiseAndModel *object_ptr, EbPtr object_init_data_ptr) {
     DenoiseAndModelInitData *init_data_ptr = (DenoiseAndModelInitData *)object_init_data_ptr;
     EbErrorType              return_error  = EB_ErrorNone;
-    uint32_t                 use_highbd    = init_data_ptr->encoder_bit_depth > EB_8BIT ? 1 : 0;
+    uint32_t                 use_highbd = init_data_ptr->encoder_bit_depth > EB_EIGHT_BIT ? 1 : 0;
 
     int32_t chroma_sub_log2[2] = {1, 1}; //todo: send chroma subsampling
     chroma_sub_log2[0]         = (init_data_ptr->encoder_color_format == EB_YUV444 ? 1 : 2) - 1;
@@ -2406,7 +2375,7 @@ EbErrorType denoise_and_model_ctor(AomDenoiseAndModel *object_ptr, EbPtr object_
 
     return_error = svt_aom_denoise_and_model_alloc(
         object_ptr,
-        init_data_ptr->encoder_bit_depth > EB_8BIT ? 10 : 8,
+        init_data_ptr->encoder_bit_depth > EB_EIGHT_BIT ? 10 : 8,
         DENOISING_BlockSize,
         (float)(init_data_ptr->noise_level / 10.0));
     if (return_error != EB_ErrorNone)
@@ -2434,6 +2403,8 @@ EbErrorType denoise_and_model_ctor(AomDenoiseAndModel *object_ptr, EbPtr object_
         EB_CALLOC_ARRAY(object_ptr->packed[2],
                         (object_ptr->uv_stride * (object_ptr->height >> chroma_sub_log2[0])));
     }
+
+    object_ptr->denoise_apply = init_data_ptr->denoise_apply;
 
     return return_error;
 }
@@ -2638,27 +2609,30 @@ int32_t svt_aom_denoise_and_model_run(struct AomDenoiseAndModel *ctx, EbPictureB
         }
         film_grain->apply_grain = 1;
 
-        if (!use_highbd) {
-            if (svt_memcpy != NULL) {
-                svt_memcpy(raw_data[0], ctx->denoised[0], (strides[0] * sd->height) << use_highbd);
-                svt_memcpy(raw_data[1],
-                           ctx->denoised[1],
-                           (strides[1] * (sd->height >> chroma_sub_log2[0])) << use_highbd);
-                svt_memcpy(raw_data[2],
-                           ctx->denoised[2],
-                           (strides[2] * (sd->height >> chroma_sub_log2[0])) << use_highbd);
-            } else {
-                svt_memcpy_c(
-                    raw_data[0], ctx->denoised[0], (strides[0] * sd->height) << use_highbd);
-                svt_memcpy_c(raw_data[1],
-                             ctx->denoised[1],
-                             (strides[1] * (sd->height >> chroma_sub_log2[0])) << use_highbd);
-                svt_memcpy_c(raw_data[2],
-                             ctx->denoised[2],
-                             (strides[2] * (sd->height >> chroma_sub_log2[0])) << use_highbd);
-            }
-        } else
-            unpack_2d_pic(ctx->denoised, sd);
+        if (ctx->denoise_apply) {
+            if (!use_highbd) {
+                if (svt_memcpy != NULL) {
+                    svt_memcpy(
+                        raw_data[0], ctx->denoised[0], (strides[0] * sd->height) << use_highbd);
+                    svt_memcpy(raw_data[1],
+                               ctx->denoised[1],
+                               (strides[1] * (sd->height >> chroma_sub_log2[0])) << use_highbd);
+                    svt_memcpy(raw_data[2],
+                               ctx->denoised[2],
+                               (strides[2] * (sd->height >> chroma_sub_log2[0])) << use_highbd);
+                } else {
+                    svt_memcpy_c(
+                        raw_data[0], ctx->denoised[0], (strides[0] * sd->height) << use_highbd);
+                    svt_memcpy_c(raw_data[1],
+                                 ctx->denoised[1],
+                                 (strides[1] * (sd->height >> chroma_sub_log2[0])) << use_highbd);
+                    svt_memcpy_c(raw_data[2],
+                                 ctx->denoised[2],
+                                 (strides[2] * (sd->height >> chroma_sub_log2[0])) << use_highbd);
+                }
+            } else
+                unpack_2d_pic(ctx->denoised, sd);
+        }
     }
     svt_aom_flat_block_finder_free(&ctx->flat_block_finder);
     svt_aom_noise_model_free(&ctx->noise_model);

@@ -25,8 +25,6 @@ extern "C" {
 #endif
 
 struct ModeDecisionContext;
-struct InterPredictionContext;
-
 extern EbErrorType clip_mv(uint32_t blk_origin_x, uint32_t blk_origin_y, int16_t *mv_x,
                            int16_t *mv_y, uint32_t picture_width, uint32_t picture_height,
                            uint32_t tb_size);
@@ -50,12 +48,12 @@ void wm_count_samples(BlkStruct *blk_ptr, const BlockSize sb_size, const BlockGe
                       uint16_t blk_origin_x, uint16_t blk_origin_y, uint8_t ref_frame_type,
                       PictureControlSet *pcs_ptr, uint16_t *num_samples);
 
-EbBool warped_motion_parameters(PictureControlSet *pcs_ptr, BlkStruct *blk_ptr, MvUnit *mv_unit,
-                                const BlockGeom *blk_geom, uint16_t blk_origin_x,
-                                uint16_t blk_origin_y, uint8_t ref_frame_type,
-                                EbWarpedMotionParams *wm_params, uint16_t *num_samples);
+Bool warped_motion_parameters(PictureControlSet *pcs_ptr, BlkStruct *blk_ptr, MvUnit *mv_unit,
+                              const BlockGeom *blk_geom, uint16_t blk_origin_x,
+                              uint16_t blk_origin_y, uint8_t ref_frame_type,
+                              EbWarpedMotionParams *wm_params, uint16_t *num_samples);
 
-static INLINE EbBool has_overlappable_candidates(const BlkStruct *blk_ptr) {
+static INLINE Bool has_overlappable_candidates(const BlkStruct *blk_ptr) {
     return (blk_ptr->prediction_unit_array[0].overlappable_neighbors[0] != 0 ||
             blk_ptr->prediction_unit_array[0].overlappable_neighbors[1] != 0);
 }

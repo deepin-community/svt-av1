@@ -20,14 +20,14 @@
 #include "EbSequenceControlSet.h"
 #include "EbPictureControlSet.h"
 #include "aom_dsp_rtcd.h"
-void get_recon_pic(PictureControlSet *pcs_ptr, EbPictureBufferDesc **recon_ptr, EbBool is_highbd);
+void get_recon_pic(PictureControlSet *pcs_ptr, EbPictureBufferDesc **recon_ptr, Bool is_highbd);
 void svt_av1_loop_restoration_save_boundary_lines(const Yv12BufferConfig *frame, Av1Common *cm,
                                                   int32_t after_cdef);
 void svt_convert_pic_8bit_to_16bit(EbPictureBufferDesc *src_8bit, EbPictureBufferDesc *dst_16bit,
                                    uint16_t ss_x, uint16_t ss_y);
 
 extern void get_recon_pic(PictureControlSet *pcs_ptr, EbPictureBufferDesc **recon_ptr,
-                          EbBool is_highbd);
+                          Bool is_highbd);
 
 static void dlf_context_dctor(EbPtr p) {
     EbThreadContext *thread_context_ptr = (EbThreadContext *)p;
@@ -77,10 +77,11 @@ void *dlf_kernel(void *input_ptr) {
 
         enc_dec_results_ptr = (EncDecResults *)enc_dec_results_wrapper_ptr->object_ptr;
         pcs_ptr             = (PictureControlSet *)enc_dec_results_ptr->pcs_wrapper_ptr->object_ptr;
-        scs_ptr             = (SequenceControlSet *)pcs_ptr->scs_wrapper_ptr->object_ptr;
+        PictureParentControlSet *ppcs = pcs_ptr->parent_pcs_ptr;
+        scs_ptr                       = pcs_ptr->scs_ptr;
 
-        EbBool is_16bit = scs_ptr->is_16bit_pipeline;
-        if (is_16bit && scs_ptr->static_config.encoder_bit_depth == EB_8BIT) {
+        Bool is_16bit = scs_ptr->is_16bit_pipeline;
+        if (is_16bit && scs_ptr->static_config.encoder_bit_depth == EB_EIGHT_BIT) {
             svt_convert_pic_8bit_to_16bit(pcs_ptr->parent_pcs_ptr->enhanced_picture_ptr,
                                           pcs_ptr->input_frame16bit,
                                           pcs_ptr->parent_pcs_ptr->scs_ptr->subsampling_x,
@@ -97,7 +98,7 @@ void *dlf_kernel(void *input_ptr) {
                                               pcs_ptr->parent_pcs_ptr->scs_ptr->subsampling_y);
             }
         }
-        EbBool         dlf_enable_flag = (EbBool)pcs_ptr->parent_pcs_ptr->dlf_ctrls.enabled;
+        Bool           dlf_enable_flag = (Bool)pcs_ptr->parent_pcs_ptr->dlf_ctrls.enabled;
         const uint16_t tg_count        = pcs_ptr->parent_pcs_ptr->tile_group_cols *
             pcs_ptr->parent_pcs_ptr->tile_group_rows;
         // Move sb level lf to here if tile_parallel
@@ -116,75 +117,48 @@ void *dlf_kernel(void *input_ptr) {
 
         //pre-cdef prep
         {
-            Av1Common           *cm = pcs_ptr->parent_pcs_ptr->av1_cm;
-            EbPictureBufferDesc *recon_picture_ptr;
-            get_recon_pic(pcs_ptr, &recon_picture_ptr, is_16bit);
-            link_eb_to_aom_buffer_desc(recon_picture_ptr,
-                                       cm->frame_to_show,
-                                       scs_ptr->max_input_pad_right,
-                                       scs_ptr->max_input_pad_bottom,
-                                       is_16bit);
-            if (scs_ptr->seq_header.enable_restoration)
+            EbPictureBufferDesc *recon_pic;
+            get_recon_pic(pcs_ptr, &recon_pic, is_16bit);
+
+            Av1Common *cm = pcs_ptr->parent_pcs_ptr->av1_cm;
+            if (ppcs->enable_restoration) {
+                link_eb_to_aom_buffer_desc(recon_pic,
+                                           cm->frame_to_show,
+                                           scs_ptr->max_input_pad_right,
+                                           scs_ptr->max_input_pad_bottom,
+                                           is_16bit);
                 svt_av1_loop_restoration_save_boundary_lines(cm->frame_to_show, cm, 0);
+            }
+
             if (scs_ptr->seq_header.cdef_level && pcs_ptr->parent_pcs_ptr->cdef_level) {
-                if (is_16bit) {
-                    pcs_ptr->src[0] = (uint16_t *)recon_picture_ptr->buffer_y +
-                        (recon_picture_ptr->origin_x +
-                         recon_picture_ptr->origin_y * recon_picture_ptr->stride_y);
-                    pcs_ptr->src[1] = (uint16_t *)recon_picture_ptr->buffer_cb +
-                        (recon_picture_ptr->origin_x / 2 +
-                         recon_picture_ptr->origin_y / 2 * recon_picture_ptr->stride_cb);
-                    pcs_ptr->src[2] = (uint16_t *)recon_picture_ptr->buffer_cr +
-                        (recon_picture_ptr->origin_x / 2 +
-                         recon_picture_ptr->origin_y / 2 * recon_picture_ptr->stride_cr);
+                const uint32_t offset_y = recon_pic->origin_x +
+                    recon_pic->origin_y * recon_pic->stride_y;
+                pcs_ptr->cdef_input_recon[0] = recon_pic->buffer_y + (offset_y << is_16bit);
+                const uint32_t offset_cb     = (recon_pic->origin_x +
+                                            recon_pic->origin_y * recon_pic->stride_cb) >>
+                    1;
+                pcs_ptr->cdef_input_recon[1] = recon_pic->buffer_cb + (offset_cb << is_16bit);
+                const uint32_t offset_cr     = (recon_pic->origin_x +
+                                            recon_pic->origin_y * recon_pic->stride_cr) >>
+                    1;
+                pcs_ptr->cdef_input_recon[2] = recon_pic->buffer_cr + (offset_cr << is_16bit);
 
-                    EbPictureBufferDesc *input_picture_ptr = pcs_ptr->input_frame16bit;
-                    pcs_ptr->ref_coeff[0] = (uint16_t *)input_picture_ptr->buffer_y +
-                        (input_picture_ptr->origin_x +
-                         input_picture_ptr->origin_y * input_picture_ptr->stride_y);
-                    pcs_ptr->ref_coeff[1] = (uint16_t *)input_picture_ptr->buffer_cb +
-                        (input_picture_ptr->origin_x / 2 +
-                         input_picture_ptr->origin_y / 2 * input_picture_ptr->stride_cb);
-                    pcs_ptr->ref_coeff[2] = (uint16_t *)input_picture_ptr->buffer_cr +
-                        (input_picture_ptr->origin_x / 2 +
-                         input_picture_ptr->origin_y / 2 * input_picture_ptr->stride_cr);
-                } else {
-                    EbByte rec_ptr    = &((
-                        recon_picture_ptr
-                            ->buffer_y)[recon_picture_ptr->origin_x +
-                                        recon_picture_ptr->origin_y * recon_picture_ptr->stride_y]);
-                    EbByte rec_ptr_cb = &(
-                        (recon_picture_ptr->buffer_cb)[recon_picture_ptr->origin_x / 2 +
-                                                       recon_picture_ptr->origin_y / 2 *
-                                                           recon_picture_ptr->stride_cb]);
-                    EbByte rec_ptr_cr = &(
-                        (recon_picture_ptr->buffer_cr)[recon_picture_ptr->origin_x / 2 +
-                                                       recon_picture_ptr->origin_y / 2 *
-                                                           recon_picture_ptr->stride_cr]);
-
-                    EbPictureBufferDesc *input_picture_ptr =
-                        (EbPictureBufferDesc *)pcs_ptr->parent_pcs_ptr->enhanced_picture_ptr;
-                    EbByte enh_ptr    = &((
-                        input_picture_ptr
-                            ->buffer_y)[input_picture_ptr->origin_x +
-                                        input_picture_ptr->origin_y * input_picture_ptr->stride_y]);
-                    EbByte enh_ptr_cb = &(
-                        (input_picture_ptr->buffer_cb)[input_picture_ptr->origin_x / 2 +
-                                                       input_picture_ptr->origin_y / 2 *
-                                                           input_picture_ptr->stride_cb]);
-                    EbByte enh_ptr_cr = &(
-                        (input_picture_ptr->buffer_cr)[input_picture_ptr->origin_x / 2 +
-                                                       input_picture_ptr->origin_y / 2 *
-                                                           input_picture_ptr->stride_cr]);
-
-                    pcs_ptr->src[0] = (uint16_t *)rec_ptr;
-                    pcs_ptr->src[1] = (uint16_t *)rec_ptr_cb;
-                    pcs_ptr->src[2] = (uint16_t *)rec_ptr_cr;
-
-                    pcs_ptr->ref_coeff[0] = (uint16_t *)enh_ptr;
-                    pcs_ptr->ref_coeff[1] = (uint16_t *)enh_ptr_cb;
-                    pcs_ptr->ref_coeff[2] = (uint16_t *)enh_ptr_cr;
-                }
+                EbPictureBufferDesc *input_pic      = is_16bit
+                         ? pcs_ptr->input_frame16bit
+                         : pcs_ptr->parent_pcs_ptr->enhanced_picture_ptr;
+                const uint32_t       input_offset_y = input_pic->origin_x +
+                    input_pic->origin_y * input_pic->stride_y;
+                pcs_ptr->cdef_input_source[0]  = input_pic->buffer_y + (input_offset_y << is_16bit);
+                const uint32_t input_offset_cb = (input_pic->origin_x +
+                                                  input_pic->origin_y * input_pic->stride_cb) >>
+                    1;
+                pcs_ptr->cdef_input_source[1] = input_pic->buffer_cb +
+                    (input_offset_cb << is_16bit);
+                const uint32_t input_offset_cr = (input_pic->origin_x +
+                                                  input_pic->origin_y * input_pic->stride_cr) >>
+                    1;
+                pcs_ptr->cdef_input_source[2] = input_pic->buffer_cr +
+                    (input_offset_cr << is_16bit);
             }
         }
 

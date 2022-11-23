@@ -124,6 +124,12 @@ void init_memory_file_map(EbConfig* config) {
     }
 }
 
+static int compar_uint64(const void* a, const void* b) {
+    const uint64_t x = *(const uint64_t*)a;
+    const uint64_t y = *(const uint64_t*)b;
+    return (x < y) ? -1 : (x > y) ? 1 : 0;
+}
+
 static EbErrorType enc_context_ctor(EncApp* enc_app, EncContext* enc_context, int32_t argc,
                                     char* argv[], EncPass enc_pass, int32_t passes) {
 #if LOG_ENC_DONE
@@ -173,8 +179,31 @@ static EbErrorType enc_context_ctor(EncApp* enc_app, EncContext* enc_context, in
             EbConfig* config                    = c->config;
             config->config.active_channel_count = num_channels;
             config->config.channel_id           = inst_cnt;
-            config->config.recon_enabled        = config->recon_file ? EB_TRUE : EB_FALSE;
+            config->config.recon_enabled        = config->recon_file ? TRUE : FALSE;
 
+            // set force_key_frames frames
+            if (config->config.force_key_frames) {
+                const double fps = (double)config->config.frame_rate_numerator /
+                    config->config.frame_rate_denominator;
+                struct forced_key_frames* forced_keyframes = &config->forced_keyframes;
+
+                for (size_t i = 0; i < forced_keyframes->count; ++i) {
+                    char*  p;
+                    double val = strtod(forced_keyframes->specifiers[i], &p);
+                    switch (*p) {
+                    case 'f':
+                    case 'F': break;
+                    case 's':
+                    case 'S':
+                    default: val *= fps; break;
+                    }
+                    forced_keyframes->frames[i] = (uint64_t)val;
+                }
+                qsort(forced_keyframes->frames,
+                      forced_keyframes->count,
+                      sizeof(forced_keyframes->frames[0]),
+                      compar_uint64);
+            }
             init_memory_file_map(config);
 
             app_svt_av1_get_time(&config->performance_context.lib_start_time[0],
@@ -190,7 +219,7 @@ static EbErrorType enc_context_ctor(EncApp* enc_app, EncContext* enc_context, in
             }
             return_error = (EbErrorType)(return_error | c->return_error);
         } else
-            c->active = EB_FALSE;
+            c->active = FALSE;
     }
     return return_error;
 }
@@ -213,7 +242,8 @@ static void print_summary(const EncContext* const enc_context) {
         const EbConfig*         config = c->config;
         if (c->exit_cond == APP_ExitConditionFinished && c->return_error == EB_ErrorNone &&
             (config->config.pass == 0 ||
-             (config->config.pass == 2 && config->config.rate_control_mode == 0) ||
+             (config->config.pass == 2 &&
+              config->config.rate_control_mode == SVT_AV1_RC_MODE_CQP_OR_CRF) ||
              config->config.pass == 3)) {
 #if LOG_ENC_DONE
             tot_frames_done = (int)config->performance_context.frame_count;
@@ -225,84 +255,68 @@ static void print_summary(const EncContext* const enc_context) {
             double max_chroma_sse = (double)max_luma_value * max_luma_value *
                 (config->config.source_width / 2 * config->config.source_height / 2);
 
-            if ((config->config.frame_rate_numerator != 0 &&
-                 config->config.frame_rate_denominator != 0) ||
-                config->config.frame_rate != 0) {
-                double frame_rate = config->config.frame_rate_numerator &&
-                        config->config.frame_rate_denominator
-                    ? (double)config->config.frame_rate_numerator /
-                        (double)config->config.frame_rate_denominator
-                    : config->config.frame_rate > 1000
-                    // Correct for 16-bit fixed-point fractional precision
-                    ? (double)config->config.frame_rate / (1 << 16)
-                    : (double)config->config.frame_rate;
+            const double frame_rate = (double)config->config.frame_rate_numerator /
+                (double)config->config.frame_rate_denominator;
 
-                if (config->config.stat_report) {
-                    if (config->stat_file) {
-                        fprintf(config->stat_file,
-                                "\nSUMMARY "
-                                "------------------------------------------------------"
-                                "---------------\n");
-                        fprintf(config->stat_file,
-                                "\n\t\t\t\tAverage PSNR (using per-frame "
-                                "PSNR)\t\t|\tOverall PSNR (using per-frame MSE)\t\t|"
-                                "\tAverage SSIM\n");
-                        fprintf(config->stat_file,
-                                "Total Frames\tAverage QP  \tY-PSNR   \tU-PSNR   "
-                                "\tV-PSNR\t\t| \tY-PSNR   \tU-PSNR   \tV-PSNR   \t|"
-                                "\tY-SSIM   \tU-SSIM   \tV-SSIM   "
-                                "\t|\tBitrate\n");
-                        fprintf(
-                            config->stat_file,
-                            "%10ld  \t   %2.2f    \t%3.2f dB\t%3.2f dB\t%3.2f dB  "
-                            "\t|\t%3.2f dB\t%3.2f dB\t%3.2f dB \t|\t%1.5f \t%1.5f "
-                            "\t%1.5f\t\t|\t%.2f kbps\n",
-                            (long int)frame_count,
-                            (float)config->performance_context.sum_qp / frame_count,
-                            (float)config->performance_context.sum_luma_psnr / frame_count,
-                            (float)config->performance_context.sum_cb_psnr / frame_count,
-                            (float)config->performance_context.sum_cr_psnr / frame_count,
-                            (float)(get_psnr(
-                                (config->performance_context.sum_luma_sse / frame_count),
-                                max_luma_sse)),
-                            (float)(get_psnr((config->performance_context.sum_cb_sse / frame_count),
-                                             max_chroma_sse)),
-                            (float)(get_psnr((config->performance_context.sum_cr_sse / frame_count),
-                                             max_chroma_sse)),
-                            (float)config->performance_context.sum_luma_ssim / frame_count,
-                            (float)config->performance_context.sum_cb_ssim / frame_count,
-                            (float)config->performance_context.sum_cr_ssim / frame_count,
-                            ((double)(config->performance_context.byte_count << 3) * frame_rate /
-                             (config->frames_encoded * 1000)));
-                    }
-                }
+            if (config->config.stat_report && config->stat_file) {
+                fprintf(config->stat_file,
+                        "\nSUMMARY "
+                        "------------------------------------------------------"
+                        "---------------\n");
+                fprintf(config->stat_file,
+                        "\n\t\t\t\tAverage PSNR (using per-frame "
+                        "PSNR)\t\t|\tOverall PSNR (using per-frame MSE)\t\t|"
+                        "\tAverage SSIM\n");
+                fprintf(config->stat_file,
+                        "Total Frames\tAverage QP  \tY-PSNR   \tU-PSNR   "
+                        "\tV-PSNR\t\t| \tY-PSNR   \tU-PSNR   \tV-PSNR   \t|"
+                        "\tY-SSIM   \tU-SSIM   \tV-SSIM   "
+                        "\t|\tBitrate\n");
+                fprintf(config->stat_file,
+                        "%10ld  \t   %2.2f    \t%3.2f dB\t%3.2f dB\t%3.2f dB  "
+                        "\t|\t%3.2f dB\t%3.2f dB\t%3.2f dB \t|\t%1.5f \t%1.5f "
+                        "\t%1.5f\t\t|\t%.2f kbps\n",
+                        (long int)frame_count,
+                        (float)config->performance_context.sum_qp / frame_count,
+                        (float)config->performance_context.sum_luma_psnr / frame_count,
+                        (float)config->performance_context.sum_cb_psnr / frame_count,
+                        (float)config->performance_context.sum_cr_psnr / frame_count,
+                        (float)(get_psnr((config->performance_context.sum_luma_sse / frame_count),
+                                         max_luma_sse)),
+                        (float)(get_psnr((config->performance_context.sum_cb_sse / frame_count),
+                                         max_chroma_sse)),
+                        (float)(get_psnr((config->performance_context.sum_cr_sse / frame_count),
+                                         max_chroma_sse)),
+                        (float)config->performance_context.sum_luma_ssim / frame_count,
+                        (float)config->performance_context.sum_cb_ssim / frame_count,
+                        (float)config->performance_context.sum_cr_ssim / frame_count,
+                        ((double)(config->performance_context.byte_count << 3) * frame_rate /
+                         (config->frames_encoded * 1000)));
+            }
 
+            fprintf(stderr,
+                    "\nSUMMARY --------------------------------- Channel %u  "
+                    "--------------------------------\n",
+                    inst_cnt + 1);
+            fprintf(stderr, "Total Frames\t\tFrame Rate\t\tByte Count\t\tBitrate\n");
+            fprintf(stderr,
+                    "%12d\t\t%4.2f fps\t\t%10.0f\t\t%5.2f kbps\n",
+                    (int32_t)frame_count,
+                    frame_rate,
+                    (double)config->performance_context.byte_count,
+                    ((double)(config->performance_context.byte_count << 3) * frame_rate /
+                     (config->frames_encoded * 1000)));
+
+            if (config->config.stat_report) {
                 fprintf(stderr,
-                        "\nSUMMARY --------------------------------- Channel %u  "
-                        "--------------------------------\n",
-                        inst_cnt + 1);
-                {
-                    fprintf(stderr, "Total Frames\t\tFrame Rate\t\tByte Count\t\tBitrate\n");
-                    fprintf(stderr,
-                            "%12d\t\t%4.2f fps\t\t%10.0f\t\t%5.2f kbps\n",
-                            (int32_t)frame_count,
-                            (double)frame_rate,
-                            (double)config->performance_context.byte_count,
-                            ((double)(config->performance_context.byte_count << 3) * frame_rate /
-                             (config->frames_encoded * 1000)));
-                }
-
-                if (config->config.stat_report) {
-                    fprintf(stderr,
-                            "\n\t\tAverage PSNR (using per-frame "
-                            "PSNR)\t\t|\tOverall PSNR (using per-frame MSE)\t\t|\t"
-                            "Average SSIM\n");
-                    fprintf(stderr,
-                            "Average "
-                            "QP\tY-PSNR\t\tU-PSNR\t\tV-PSNR\t\t|\tY-PSNR\t\tU-"
-                            "PSNR\t\tV-PSNR\t\t|\tY-SSIM\tU-SSIM\tV-SSIM\n");
-                    fprintf(
-                        stderr,
+                        "\n\t\tAverage PSNR (using per-frame "
+                        "PSNR)\t\t|\tOverall PSNR (using per-frame MSE)\t\t|\t"
+                        "Average SSIM\n");
+                fprintf(stderr,
+                        "Average "
+                        "QP\tY-PSNR\t\tU-PSNR\t\tV-PSNR\t\t|\tY-PSNR\t\tU-"
+                        "PSNR\t\tV-PSNR\t\t|\tY-SSIM\tU-SSIM\tV-SSIM\n");
+                fprintf(stderr,
                         "%11.2f\t%4.2f dB\t%4.2f dB\t%4.2f dB\t|\t%4.2f "
                         "dB\t%4.2f dB\t%4.2f dB\t|\t%1.5f\t%1.5f\t%1.5f\n",
                         (float)config->performance_context.sum_qp / frame_count,
@@ -318,10 +332,9 @@ static void print_summary(const EncContext* const enc_context) {
                         (float)config->performance_context.sum_luma_ssim / frame_count,
                         (float)config->performance_context.sum_cb_ssim / frame_count,
                         (float)config->performance_context.sum_cr_ssim / frame_count);
-                }
-
-                fflush(stdout);
             }
+
+            fflush(stdout);
         }
     }
     fprintf(stderr, "\n");
@@ -333,9 +346,10 @@ static void print_performance(const EncContext* const enc_context) {
         const EncChannel* c = enc_context->channels + inst_cnt;
         if (c->exit_cond == APP_ExitConditionFinished && c->return_error == EB_ErrorNone) {
             EbConfig* config = c->config;
-            if (config->stop_encoder == EB_FALSE) {
+            if (config->stop_encoder == FALSE) {
                 if ((config->config.pass == 0 ||
-                     (config->config.pass == 2 && config->config.rate_control_mode == 0) ||
+                     (config->config.pass == 2 &&
+                      config->config.rate_control_mode == SVT_AV1_RC_MODE_CQP_OR_CRF) ||
                      config->config.pass == 3))
                     fprintf(stderr,
                             "\nChannel %u\nAverage Speed:\t\t%.3f fps\nTotal Encoding Time:\t%.0f "
@@ -369,15 +383,15 @@ static void print_warnnings(const EncContext* const enc_context) {
     }
 }
 
-static EbBool is_active(const EncChannel* c) { return c->active; }
+static Bool is_active(const EncChannel* c) { return c->active; }
 
-static EbBool has_active_channel(const EncContext* const enc_context) {
+static Bool has_active_channel(const EncContext* const enc_context) {
     // check if all channels are inactive
     for (uint32_t inst_cnt = 0; inst_cnt < enc_context->num_channels; ++inst_cnt) {
         if (is_active(enc_context->channels + inst_cnt))
-            return EB_TRUE;
+            return TRUE;
     }
-    return EB_FALSE;
+    return FALSE;
 }
 
 static void enc_channel_step(EncChannel* c, EncApp* enc_app, EncContext* enc_context) {
@@ -392,7 +406,7 @@ static void enc_channel_step(EncChannel* c, EncApp* enc_app, EncContext* enc_con
         ((c->exit_cond_recon == APP_ExitConditionError && config->recon_file) ||
          c->exit_cond_output == APP_ExitConditionError ||
          c->exit_cond_input == APP_ExitConditionError)) {
-        c->active = EB_FALSE;
+        c->active = FALSE;
         if (config->recon_file)
             c->exit_cond = (AppExitConditionType)(c->exit_cond_recon | c->exit_cond_output |
                                                   c->exit_cond_input);
@@ -423,7 +437,7 @@ static void enc_channel_start(EncChannel* c) {
         c->exit_cond_output = APP_ExitConditionNone;
         c->exit_cond_recon  = config->recon_file ? APP_ExitConditionNone : APP_ExitConditionError;
         c->exit_cond_input  = APP_ExitConditionNone;
-        c->active           = EB_TRUE;
+        c->active           = TRUE;
         app_svt_av1_get_time(&config->performance_context.encode_start_time[0],
                              &config->performance_context.encode_start_time[1]);
     }
@@ -484,8 +498,7 @@ int32_t main(int32_t argc, char* argv[]) {
         return 0;
 
     enc_app_ctor(&enc_app);
-    MultiPassModes multi_pass_mode;
-    passes = get_passes(argc, argv, enc_pass, &multi_pass_mode);
+    passes = get_passes(argc, argv, enc_pass);
     for (uint8_t pass_idx = 0; pass_idx < passes; pass_idx++) {
         return_error = enc_context_ctor(
             &enc_app, &enc_context, argc, argv, enc_pass[pass_idx], passes);

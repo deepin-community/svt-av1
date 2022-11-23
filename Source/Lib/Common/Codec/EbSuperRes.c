@@ -20,7 +20,7 @@
 // Calculates the scaled dimension given the original dimension and the scale
 // denominator.
 void calculate_scaled_size_helper(uint16_t *dim, uint8_t denom) {
-    if (denom != SCALE_NUMERATOR) {
+    if (denom != SCALE_NUMERATOR && denom <= SCALE_DENOMINATOR_MAX) {
         // We need to ensure the constraint in "Appendix A" of the spec:
         // * FrameWidth is greater than or equal to 16
         // * FrameHeight is greater than or equal to 16
@@ -34,6 +34,9 @@ void calculate_scaled_size_helper(uint16_t *dim, uint8_t denom) {
         // *width <<= 1;
         *dim = (uint16_t)((*dim * SCALE_NUMERATOR + denom / 2) / (denom));
         *dim = (uint16_t)AOMMAX(*dim, min_dim);
+    } else if (denom == SCALE_THREE_QUATER) {
+        // reference scaling resize defines denom 17 as 3/4
+        *dim = (uint16_t)((3 + (*dim * 3)) >> 2);
     }
 }
 
@@ -219,8 +222,8 @@ void highbd_upscale_normative_rect(const uint8_t *const input, int height, int w
 
 void svt_av1_upscale_normative_rows(const Av1Common *cm, const uint8_t *src, int src_stride,
                                     uint8_t *dst, int dst_stride, int rows, int sub_x, int bd,
-                                    EbBool is_16bit_pipeline) {
-    int       high_bd                = bd > EB_8BIT || is_16bit_pipeline;
+                                    Bool is_16bit_pipeline) {
+    int       high_bd                = bd > EB_EIGHT_BIT || is_16bit_pipeline;
     const int downscaled_plane_width = ROUND_POWER_OF_TWO(cm->frm_size.frame_width, sub_x);
     const int upscaled_plane_width   = ROUND_POWER_OF_TWO(cm->frm_size.superres_upscaled_width,
                                                         sub_x);

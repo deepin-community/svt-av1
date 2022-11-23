@@ -67,10 +67,7 @@ void allocate_memory_table(uint32_t instance_idx) {
 
 static EbErrorType allocate_frame_buffer(EbConfig *config, uint8_t *p_buffer) {
     EbSvtAv1EncConfiguration *cfg                 = &config->config;
-    const int32_t             ten_bit_packed_mode = (cfg->encoder_bit_depth > 8) &&
-            (cfg->compressed_ten_bit_format == 0)
-                    ? 1
-                    : 0;
+    const int32_t             ten_bit_packed_mode = cfg->encoder_bit_depth > 8;
 
     // Chroma subsampling
     const EbColorFormat color_format  = (EbColorFormat)cfg->encoder_color_format;
@@ -205,6 +202,7 @@ EbErrorType allocate_output_recon_buffers(EbConfig *config, EbAppContext *callba
 
     callback_data->recon_buffer->n_alloc_len   = (uint32_t)frame_size;
     callback_data->recon_buffer->p_app_private = NULL;
+    callback_data->recon_buffer->metadata      = NULL;
 
     return EB_ErrorNone;
 }
@@ -219,9 +217,7 @@ EbErrorType preload_frames_info_ram(EbConfig *config) {
 
     read_size = input_padded_width * input_padded_height; //Luma
     read_size += 2 * (read_size >> (3 - color_format)); // Add Chroma
-    if (config->config.encoder_bit_depth == 10 && config->config.compressed_ten_bit_format == 1)
-        read_size += read_size / 4;
-    else if (config->config.encoder_bit_depth > 8)
+    if (config->config.encoder_bit_depth > 8)
         read_size *= 2; //10 bit
     EB_APP_MALLOC(uint8_t **,
                   config->sequence_buffer,

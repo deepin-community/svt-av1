@@ -14,6 +14,7 @@
  ***************************************/
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
@@ -26,6 +27,8 @@
 #ifndef _WIN32
 #include <sys/mman.h>
 #endif
+
+#include "EbAppOutputivf.h"
 
 /***************************************
  * Macros
@@ -158,22 +161,12 @@ static void release_memory_mapped_file(EbConfig *config, uint8_t is_16bit,
                                        EbBufferHeaderType *header_ptr) {
     const uint32_t input_padded_width  = config->input_padded_width;
     const uint32_t input_padded_height = config->input_padded_height;
-    uint64_t       luma_read_size      = (uint64_t)input_padded_width * input_padded_height
-        << (config->config.compressed_ten_bit_format ? 0 : is_16bit);
-    const uint8_t  color_format = config->config.encoder_color_format;
-    EbSvtIOFormat *input_ptr    = (EbSvtIOFormat *)header_ptr->p_buffer;
+    uint64_t       luma_read_size = (uint64_t)input_padded_width * input_padded_height << is_16bit;
+    const uint8_t  color_format   = config->config.encoder_color_format;
+    EbSvtIOFormat *input_ptr      = (EbSvtIOFormat *)header_ptr->p_buffer;
     svt_munmap(&config->mmap, input_ptr->luma, luma_read_size);
     svt_munmap(&config->mmap, input_ptr->cb, luma_read_size >> (3 - color_format));
     svt_munmap(&config->mmap, input_ptr->cr, luma_read_size >> (3 - color_format));
-
-    if (config->config.compressed_ten_bit_format) {
-        uint32_t nbit_luma_read_size   = (input_padded_width / 4) * input_padded_height;
-        uint32_t nbit_chroma_read_size = nbit_luma_read_size >> (3 - color_format);
-
-        svt_munmap(&config->mmap, input_ptr->luma_ext, nbit_luma_read_size);
-        svt_munmap(&config->mmap, input_ptr->cb_ext, nbit_chroma_read_size >> (3 - color_format));
-        svt_munmap(&config->mmap, input_ptr->cr_ext, nbit_chroma_read_size >> (3 - color_format));
-    }
 }
 
 void read_input_frames(EbConfig *config, uint8_t is_16bit, EbBufferHeaderType *header_ptr) {
@@ -190,104 +183,61 @@ void read_input_frames(EbConfig *config, uint8_t is_16bit, EbBufferHeaderType *h
     input_ptr->cb_stride = input_padded_width >> subsampling_x;
 
     if (config->buffered_input == -1) {
-        uint64_t read_size;
-        if (is_16bit == 0 || (is_16bit == 1 && config->config.compressed_ten_bit_format == 0)) {
-            read_size = (uint64_t)SIZE_OF_ONE_FRAME_IN_BYTES(
-                input_padded_width, input_padded_height, color_format, is_16bit);
+        uint64_t read_size = (uint64_t)SIZE_OF_ONE_FRAME_IN_BYTES(
+            input_padded_width, input_padded_height, color_format, is_16bit);
 
-            header_ptr->n_filled_len = 0;
+        header_ptr->n_filled_len = 0;
 
-            if (config->mmap.enable) {
-                if (config->y4m_input == EB_TRUE && config->processed_frame_count == 0) {
-                    read_and_compute_y4m_frame_delimiter(
-                        config->input_file, config->error_log_file, &config->mmap.y4m_frm_hdr);
-                }
-            } else {
-                /* if input is a y4m file, read next line which contains "FRAME" */
-                if (config->y4m_input == EB_TRUE)
-                    read_y4m_frame_delimiter(config->input_file, config->error_log_file);
-            }
-            uint64_t luma_read_size = (uint64_t)input_padded_width * input_padded_height
-                << is_16bit;
-            uint32_t chroma_read_size = ((uint32_t)luma_read_size >> (3 - color_format));
-            uint8_t *eb_input_ptr     = input_ptr->luma;
-            if (!config->y4m_input && config->processed_frame_count == 0 &&
-                (config->input_file == stdin || config->input_file_is_fifo)) {
-                /* 9 bytes were already buffered during the the YUV4MPEG2 header probe */
-                memcpy(eb_input_ptr, config->y4m_buf, YUV4MPEG2_IND_SIZE);
-                header_ptr->n_filled_len += YUV4MPEG2_IND_SIZE;
-                eb_input_ptr += YUV4MPEG2_IND_SIZE;
-                header_ptr->n_filled_len += (uint32_t)fread(
-                    eb_input_ptr, 1, luma_read_size - YUV4MPEG2_IND_SIZE, input_file);
-            } else {
-                if (config->mmap.enable) {
-                    int64_t offset  = get_mmap_offset(config, read_size);
-                    input_ptr->luma = svt_mmap(&config->mmap, offset, luma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->luma ? (uint32_t)luma_read_size : 0);
-                } else
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->luma, 1, luma_read_size, input_file);
-            }
-
-            if (config->mmap.enable) {
-                int64_t offset = get_mmap_offset(config, read_size);
-
-                offset += luma_read_size;
-                input_ptr->cb = svt_mmap(&config->mmap, offset, chroma_read_size);
-                header_ptr->n_filled_len += (input_ptr->cb ? chroma_read_size : 0);
-
-                offset += chroma_read_size;
-                input_ptr->cr = svt_mmap(&config->mmap, offset, chroma_read_size);
-                header_ptr->n_filled_len += (input_ptr->cr ? chroma_read_size : 0);
-            } else {
-                header_ptr->n_filled_len += (uint32_t)fread(
-                    input_ptr->cb, 1, luma_read_size >> (3 - color_format), input_file);
-                header_ptr->n_filled_len += (uint32_t)fread(
-                    input_ptr->cr, 1, luma_read_size >> (3 - color_format), input_file);
-            }
-
-            if (read_size != header_ptr->n_filled_len) {
-                if (config->mmap.enable) {
-                    config->mmap.file_frame_it = 0;
-
-                    int64_t offset  = get_mmap_offset(config, read_size);
-                    input_ptr->luma = svt_mmap(&config->mmap, offset, luma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->luma ? (uint32_t)luma_read_size : 0);
-
-                    offset += luma_read_size;
-                    input_ptr->cb = svt_mmap(&config->mmap, offset, chroma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->cb ? chroma_read_size : 0);
-
-                    offset += chroma_read_size;
-                    input_ptr->cr = svt_mmap(&config->mmap, offset, chroma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->cr ? chroma_read_size : 0);
-                } else if (!config->input_file_is_fifo) {
-                    fseek(input_file, 0, SEEK_SET);
-                    if (config->y4m_input == EB_TRUE) {
-                        read_and_skip_y4m_header(config->input_file);
-                        read_y4m_frame_delimiter(config->input_file, config->error_log_file);
-                    }
-                    header_ptr->n_filled_len = (uint32_t)fread(
-                        input_ptr->luma, 1, luma_read_size, input_file);
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->cb, 1, luma_read_size >> (3 - color_format), input_file);
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->cr, 1, luma_read_size >> (3 - color_format), input_file);
-                }
-            }
+        if (config->y4m_input) {
+            /* if input is a y4m file, read next line which contains "FRAME" */
+            if (config->processed_frame_count == 0 && config->mmap.enable)
+                config->mmap.y4m_frm_hdr = read_y4m_frame_delimiter(config->input_file,
+                                                                    config->error_log_file);
+            else if (!config->mmap.enable)
+                read_y4m_frame_delimiter(config->input_file, config->error_log_file);
+        }
+        uint64_t luma_read_size   = (uint64_t)input_padded_width * input_padded_height << is_16bit;
+        uint32_t chroma_read_size = ((uint32_t)luma_read_size >> (3 - color_format));
+        uint8_t *eb_input_ptr     = input_ptr->luma;
+        if (!config->y4m_input && config->processed_frame_count == 0 &&
+            (config->input_file == stdin || config->input_file_is_fifo)) {
+            /* 9 bytes were already buffered during the the YUV4MPEG2 header probe */
+            memcpy(eb_input_ptr, config->y4m_buf, YUV4MPEG2_IND_SIZE);
+            header_ptr->n_filled_len += YUV4MPEG2_IND_SIZE;
+            eb_input_ptr += YUV4MPEG2_IND_SIZE;
+            header_ptr->n_filled_len += (uint32_t)fread(
+                eb_input_ptr, 1, luma_read_size - YUV4MPEG2_IND_SIZE, input_file);
         } else {
-            assert(is_16bit == 1 && config->config.compressed_ten_bit_format == 1);
-            // 10-bit Compressed Unpacked Mode
-            const uint32_t luma_read_size        = input_padded_width * input_padded_height;
-            const uint32_t chroma_read_size      = luma_read_size >> (3 - color_format);
-            const uint32_t nbit_luma_read_size   = (input_padded_width / 4) * input_padded_height;
-            const uint32_t nbit_chroma_read_size = nbit_luma_read_size >> (3 - color_format);
-            read_size                            = luma_read_size + nbit_luma_read_size +
-                2 * (chroma_read_size + nbit_chroma_read_size);
-            // Fill the buffer with a complete frame
-            header_ptr->n_filled_len = 0;
-
             if (config->mmap.enable) {
+                int64_t offset  = get_mmap_offset(config, read_size);
+                input_ptr->luma = svt_mmap(&config->mmap, offset, luma_read_size);
+                header_ptr->n_filled_len += (input_ptr->luma ? (uint32_t)luma_read_size : 0);
+            } else
+                header_ptr->n_filled_len += (uint32_t)fread(
+                    input_ptr->luma, 1, luma_read_size, input_file);
+        }
+
+        if (config->mmap.enable) {
+            int64_t offset = get_mmap_offset(config, read_size);
+
+            offset += luma_read_size;
+            input_ptr->cb = svt_mmap(&config->mmap, offset, chroma_read_size);
+            header_ptr->n_filled_len += (input_ptr->cb ? chroma_read_size : 0);
+
+            offset += chroma_read_size;
+            input_ptr->cr = svt_mmap(&config->mmap, offset, chroma_read_size);
+            header_ptr->n_filled_len += (input_ptr->cr ? chroma_read_size : 0);
+        } else {
+            header_ptr->n_filled_len += (uint32_t)fread(
+                input_ptr->cb, 1, luma_read_size >> (3 - color_format), input_file);
+            header_ptr->n_filled_len += (uint32_t)fread(
+                input_ptr->cr, 1, luma_read_size >> (3 - color_format), input_file);
+        }
+
+        if (read_size != header_ptr->n_filled_len) {
+            if (config->mmap.enable) {
+                config->mmap.file_frame_it = 0;
+
                 int64_t offset  = get_mmap_offset(config, read_size);
                 input_ptr->luma = svt_mmap(&config->mmap, offset, luma_read_size);
                 header_ptr->n_filled_len += (input_ptr->luma ? (uint32_t)luma_read_size : 0);
@@ -299,77 +249,18 @@ void read_input_frames(EbConfig *config, uint8_t is_16bit, EbBufferHeaderType *h
                 offset += chroma_read_size;
                 input_ptr->cr = svt_mmap(&config->mmap, offset, chroma_read_size);
                 header_ptr->n_filled_len += (input_ptr->cr ? chroma_read_size : 0);
-
-                offset += chroma_read_size;
-                input_ptr->luma_ext = svt_mmap(&config->mmap, offset, nbit_luma_read_size);
-                header_ptr->n_filled_len += (input_ptr->luma_ext ? (uint32_t)nbit_luma_read_size
-                                                                 : 0);
-
-                offset += nbit_luma_read_size;
-                input_ptr->cb_ext = svt_mmap(&config->mmap, offset, nbit_chroma_read_size);
-                header_ptr->n_filled_len += (input_ptr->cb_ext ? nbit_chroma_read_size : 0);
-
-                offset += nbit_chroma_read_size;
-                input_ptr->cr_ext = svt_mmap(&config->mmap, offset, nbit_chroma_read_size);
-                header_ptr->n_filled_len += (input_ptr->cr_ext ? nbit_chroma_read_size : 0);
-            } else {
-                header_ptr->n_filled_len += (uint32_t)fread(
+            } else if (!config->input_file_is_fifo) {
+                fseek(input_file, 0, SEEK_SET);
+                if (config->y4m_input == TRUE) {
+                    read_and_skip_y4m_header(config->input_file);
+                    read_y4m_frame_delimiter(config->input_file, config->error_log_file);
+                }
+                header_ptr->n_filled_len = (uint32_t)fread(
                     input_ptr->luma, 1, luma_read_size, input_file);
                 header_ptr->n_filled_len += (uint32_t)fread(
-                    input_ptr->cb, 1, chroma_read_size, input_file);
+                    input_ptr->cb, 1, luma_read_size >> (3 - color_format), input_file);
                 header_ptr->n_filled_len += (uint32_t)fread(
-                    input_ptr->cr, 1, chroma_read_size, input_file);
-
-                header_ptr->n_filled_len += (uint32_t)fread(
-                    input_ptr->luma_ext, 1, nbit_luma_read_size, input_file);
-                header_ptr->n_filled_len += (uint32_t)fread(
-                    input_ptr->cb_ext, 1, nbit_chroma_read_size, input_file);
-                header_ptr->n_filled_len += (uint32_t)fread(
-                    input_ptr->cr_ext, 1, nbit_chroma_read_size, input_file);
-            }
-            if (read_size != header_ptr->n_filled_len) {
-                if (config->mmap.enable) {
-                    config->mmap.file_frame_it = 0;
-
-                    int64_t offset  = get_mmap_offset(config, read_size);
-                    input_ptr->luma = svt_mmap(&config->mmap, offset, luma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->luma ? (uint32_t)luma_read_size : 0);
-
-                    offset += luma_read_size;
-                    input_ptr->cb = svt_mmap(&config->mmap, offset, chroma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->cb ? chroma_read_size : 0);
-
-                    offset += chroma_read_size;
-                    input_ptr->cr = svt_mmap(&config->mmap, offset, chroma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->cr ? chroma_read_size : 0);
-
-                    offset += chroma_read_size;
-                    input_ptr->luma_ext = svt_mmap(&config->mmap, offset, nbit_luma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->luma_ext ? (uint32_t)nbit_luma_read_size
-                                                                     : 0);
-
-                    offset += nbit_luma_read_size;
-                    input_ptr->cb_ext = svt_mmap(&config->mmap, offset, nbit_chroma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->cb_ext ? nbit_chroma_read_size : 0);
-
-                    offset += nbit_chroma_read_size;
-                    input_ptr->cr_ext = svt_mmap(&config->mmap, offset, nbit_chroma_read_size);
-                    header_ptr->n_filled_len += (input_ptr->cr_ext ? nbit_chroma_read_size : 0);
-                } else {
-                    fseek(input_file, 0, SEEK_SET);
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->luma, 1, luma_read_size, input_file);
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->cb, 1, chroma_read_size, input_file);
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->cr, 1, chroma_read_size, input_file);
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->luma_ext, 1, nbit_luma_read_size, input_file);
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->cb_ext, 1, nbit_chroma_read_size, input_file);
-                    header_ptr->n_filled_len += (uint32_t)fread(
-                        input_ptr->cr_ext, 1, nbit_chroma_read_size, input_file);
-                }
+                    input_ptr->cr, 1, luma_read_size >> (3 - color_format), input_file);
             }
         }
 
@@ -388,61 +279,26 @@ void read_input_frames(EbConfig *config, uint8_t is_16bit, EbBufferHeaderType *h
         }
 
     } else {
-        if (is_16bit && config->config.compressed_ten_bit_format == 1) {
-            // Determine size of each plane
-            const size_t luma_8bit_size   = input_padded_width * input_padded_height;
-            const size_t chroma_8bit_size = luma_8bit_size >> (3 - color_format);
-            const size_t luma_2bit_size   = luma_8bit_size / 4; //4-2bit pixels into 1 byte
-            const size_t chroma_2bit_size = luma_2bit_size >> (3 - color_format);
+        //Normal unpacked mode:yuv420p10le yuv422p10le yuv444p10le
+        const size_t luma_size   = (input_padded_width * input_padded_height) << is_16bit;
+        const size_t chroma_size = luma_size >> (3 - color_format);
 
-            input_ptr            = (EbSvtIOFormat *)header_ptr->p_buffer;
-            input_ptr->y_stride  = input_padded_width;
-            input_ptr->cr_stride = input_padded_width >> subsampling_x;
-            input_ptr->cb_stride = input_padded_width >> subsampling_x;
+        input_ptr = (EbSvtIOFormat *)header_ptr->p_buffer;
 
-            input_ptr->luma =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input];
-            input_ptr->cb =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
-                luma_8bit_size;
-            input_ptr->cr =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
-                luma_8bit_size + chroma_8bit_size;
+        input_ptr->y_stride  = input_padded_width;
+        input_ptr->cr_stride = input_padded_width >> subsampling_x;
+        input_ptr->cb_stride = input_padded_width >> subsampling_x;
 
-            input_ptr->luma_ext =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
-                luma_8bit_size + 2 * chroma_8bit_size;
-            input_ptr->cb_ext =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
-                luma_8bit_size + 2 * chroma_8bit_size + luma_2bit_size;
-            input_ptr->cr_ext =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
-                luma_8bit_size + 2 * chroma_8bit_size + luma_2bit_size + chroma_2bit_size;
+        input_ptr->luma =
+            config->sequence_buffer[config->processed_frame_count % config->buffered_input];
+        input_ptr->cb =
+            config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
+            luma_size;
+        input_ptr->cr =
+            config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
+            luma_size + chroma_size;
 
-            header_ptr->n_filled_len = (uint32_t)(luma_8bit_size + luma_2bit_size +
-                                                  2 * (chroma_8bit_size + chroma_2bit_size));
-        } else {
-            //Normal unpacked mode:yuv420p10le yuv422p10le yuv444p10le
-            const size_t luma_size   = (input_padded_width * input_padded_height) << is_16bit;
-            const size_t chroma_size = luma_size >> (3 - color_format);
-
-            input_ptr = (EbSvtIOFormat *)header_ptr->p_buffer;
-
-            input_ptr->y_stride  = input_padded_width;
-            input_ptr->cr_stride = input_padded_width >> subsampling_x;
-            input_ptr->cb_stride = input_padded_width >> subsampling_x;
-
-            input_ptr->luma =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input];
-            input_ptr->cb =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
-                luma_size;
-            input_ptr->cr =
-                config->sequence_buffer[config->processed_frame_count % config->buffered_input] +
-                luma_size + chroma_size;
-
-            header_ptr->n_filled_len = (uint32_t)(luma_size + 2 * chroma_size);
-        }
+        header_ptr->n_filled_len = (uint32_t)(luma_size + 2 * chroma_size);
     }
 
     return;
@@ -479,7 +335,7 @@ static long get_next_qp_from_qp_file(FILE *const qp_file, int *const qp_read_fro
     return qp;
 }
 
-static unsigned char send_qp_on_the_fly(FILE *const qp_file, EbBool *use_qp_file) {
+static unsigned char send_qp_on_the_fly(FILE *const qp_file, Bool *use_qp_file) {
     long tmp_qp            = 0;
     int  qp_read_from_file = 0;
 
@@ -488,7 +344,7 @@ static unsigned char send_qp_on_the_fly(FILE *const qp_file, EbBool *use_qp_file
         tmp_qp = get_next_qp_from_qp_file(qp_file, &qp_read_from_file);
 
     if (tmp_qp == -1) {
-        *use_qp_file = EB_FALSE;
+        *use_qp_file = FALSE;
         fprintf(stderr, "\nWarning: QP File did not contain any valid QPs");
     }
     return (unsigned)CLIP3(0, 63, tmp_qp);
@@ -521,6 +377,18 @@ static void injector(uint64_t processed_frame_count, uint32_t injector_frame_rat
     }
 }
 
+static bool is_forced_keyframe(const EbConfig *config, uint64_t pts) {
+    if (config->forced_keyframes.frames) {
+        for (size_t i = 0; i < config->forced_keyframes.count; ++i) {
+            if (config->forced_keyframes.frames[i] == pts)
+                return true;
+            if (config->forced_keyframes.frames[i] > pts)
+                break;
+        }
+    }
+    return false;
+}
+
 //************************************/
 // process_input_buffer
 // Reads yuv frames from file and copy
@@ -541,18 +409,13 @@ void process_input_buffer(EncChannel *channel) {
     const int64_t frames_to_be_encoded = config->frames_to_be_encoded;
     int64_t       total_bytes_to_process_count;
     int64_t       remaining_byte_count;
-    uint32_t      compressed10bit_frame_size =
-        (uint32_t)((input_padded_width * input_padded_height) +
-                   2 * ((input_padded_width * input_padded_width) >> (3 - color_format)));
-    compressed10bit_frame_size += compressed10bit_frame_size / 4;
 
     if (channel->exit_cond_input != APP_ExitConditionNone)
         return;
     if (config->injector && config->processed_frame_count)
         injector(config->processed_frame_count, config->injector_frame_rate);
-    total_bytes_to_process_count = (frames_to_be_encoded < 0) ? -1
-        : (config->config.encoder_bit_depth == 10 && config->config.compressed_ten_bit_format == 1)
-        ? frames_to_be_encoded * (int64_t)compressed10bit_frame_size
+    total_bytes_to_process_count = (frames_to_be_encoded < 0)
+        ? -1
         : frames_to_be_encoded *
             SIZE_OF_ONE_FRAME_IN_BYTES(
                 input_padded_width, input_padded_height, color_format, is_16bit);
@@ -562,7 +425,7 @@ void process_input_buffer(EncChannel *channel) {
         : total_bytes_to_process_count - (int64_t)config->processed_byte_count;
 
     // If there are bytes left to encode, configure the header
-    if (remaining_byte_count != 0 && config->stop_encoder == EB_FALSE) {
+    if (remaining_byte_count != 0 && config->stop_encoder == FALSE) {
         read_input_frames(config, is_16bit, header_ptr);
         if (header_ptr->n_filled_len) {
             // Update the context parameters
@@ -577,10 +440,12 @@ void process_input_buffer(EncChannel *channel) {
                 header_ptr->qp = send_qp_on_the_fly(config->qp_file, &config->config.use_qp_file);
 
             if (keep_running == 0 && !config->stop_encoder)
-                config->stop_encoder = EB_TRUE;
+                config->stop_encoder = TRUE;
             // Fill in Buffers Header control data
             header_ptr->pts      = config->processed_frame_count - 1;
-            header_ptr->pic_type = EB_AV1_INVALID_PICTURE;
+            header_ptr->pic_type = is_forced_keyframe(config, header_ptr->pts)
+                ? EB_AV1_KEY_PICTURE
+                : EB_AV1_INVALID_PICTURE;
             header_ptr->flags    = 0;
             header_ptr->metadata = NULL;
             // Send the picture
@@ -613,77 +478,11 @@ void process_input_buffer(EncChannel *channel) {
 #define LONG_ENCODE_FRAME_ENCODE 4000
 #define SPEED_MEASUREMENT_INTERVAL 2000
 #define START_STEADY_STATE 1000
-#define AV1_FOURCC 0x31305641 // used for ivf header
-#define IVF_STREAM_HEADER_SIZE 32
-#define IVF_FRAME_HEADER_SIZE 12
 #define OBU_FRAME_HEADER_SIZE 3
 #define TD_SIZE 2
-static __inline void mem_put_le32(void *vmem, int32_t val) {
-    uint8_t *mem = (uint8_t *)vmem;
 
-    mem[0] = (uint8_t)((val >> 0) & 0xff);
-    mem[1] = (uint8_t)((val >> 8) & 0xff);
-    mem[2] = (uint8_t)((val >> 16) & 0xff);
-    mem[3] = (uint8_t)((val >> 24) & 0xff);
-}
 #define MEM_VALUE_T_SZ_BITS (sizeof(MEM_VALUE_T) << 3)
 
-static __inline void mem_put_le16(void *vmem, int32_t val) {
-    uint8_t *mem = (uint8_t *)vmem;
-
-    mem[0] = (uint8_t)((val >> 0) & 0xff);
-    mem[1] = (uint8_t)((val >> 8) & 0xff);
-}
-
-static void write_ivf_stream_header(EbConfig *config) {
-    char header[IVF_STREAM_HEADER_SIZE];
-    header[0] = 'D';
-    header[1] = 'K';
-    header[2] = 'I';
-    header[3] = 'F';
-    mem_put_le16(header + 4, 0); // version
-    mem_put_le16(header + 6, 32); // header size
-    mem_put_le32(header + 8, AV1_FOURCC); // fourcc
-    mem_put_le16(header + 12, config->input_padded_width); // width
-    mem_put_le16(header + 14, config->input_padded_height); // height
-    if (config->config.frame_rate_denominator != 0 && config->config.frame_rate_numerator != 0) {
-        mem_put_le32(header + 16, config->config.frame_rate_numerator); // rate
-        mem_put_le32(header + 20, config->config.frame_rate_denominator); // scale
-            //mem_put_le32(header + 16, config->frame_rate_denominator);  // rate
-            //mem_put_le32(header + 20, config->frame_rate_numerator);  // scale
-    } else {
-        mem_put_le32(header + 16, (config->config.frame_rate >> 16) * 1000); // rate
-        mem_put_le32(header + 20, 1000); // scale
-            //mem_put_le32(header + 16, config->frame_rate_denominator);  // rate
-            //mem_put_le32(header + 20, config->frame_rate_numerator);  // scale
-    }
-    mem_put_le32(header + 24, 0); // length
-    mem_put_le32(header + 28, 0); // unused
-    //config->performance_context.byte_count += 32;
-    if (config->bitstream_file)
-        fwrite(header, 1, IVF_STREAM_HEADER_SIZE, config->bitstream_file);
-
-    return;
-}
-
-static void write_ivf_frame_header(EbConfig *config, uint32_t byte_count) {
-    char    header[IVF_FRAME_HEADER_SIZE];
-    int32_t write_location = 0;
-
-    mem_put_le32(&header[write_location], (int32_t)byte_count);
-    write_location = write_location + 4;
-    mem_put_le32(&header[write_location], (int32_t)((config->ivf_count) & 0xFFFFFFFF));
-    write_location = write_location + 4;
-    mem_put_le32(&header[write_location], (int32_t)((config->ivf_count) >> 32));
-
-    config->byte_count_since_ivf = (byte_count);
-
-    config->ivf_count++;
-    fflush(stdout);
-
-    if (config->bitstream_file)
-        fwrite(header, 1, IVF_FRAME_HEADER_SIZE, config->bitstream_file);
-}
 double get_psnr(double sse, double max) {
     double psnr;
     if (sse == 0)
@@ -828,7 +627,10 @@ void process_output_stream_buffer(EncChannel *channel, EncApp *enc_app, int32_t 
             if (stream_file) {
                 if (config->performance_context.frame_count == 1 &&
                     !(flags & EB_BUFFERFLAG_IS_ALT_REF)) {
-                    write_ivf_stream_header(config);
+                    write_ivf_stream_header(config,
+                                            config->frames_to_be_encoded == -1
+                                                ? 0
+                                                : (int32_t)config->frames_to_be_encoded);
                 }
                 write_ivf_frame_header(config, header_ptr->n_filled_len);
                 fwrite(header_ptr->p_buffer, 1, header_ptr->n_filled_len, stream_file);
@@ -881,14 +683,8 @@ void process_output_stream_buffer(EncChannel *channel, EncApp *enc_app, int32_t 
             }
             ++*frame_count;
             const double fps = (double)*frame_count / config->performance_context.total_encode_time;
-            const double frame_rate = config->config.frame_rate_numerator &&
-                    config->config.frame_rate_denominator
-                ? (double)config->config.frame_rate_numerator /
-                    (double)config->config.frame_rate_denominator
-                : config->config.frame_rate > 1000
-                // Correct for 16-bit fixed-point fractional precision
-                ? (double)config->config.frame_rate / (1 << 16)
-                : (double)config->config.frame_rate;
+            const double frame_rate = (double)config->config.frame_rate_numerator /
+                (double)config->config.frame_rate_denominator;
             switch (config->progress) {
             case 0: break;
             case 1:

@@ -36,7 +36,7 @@
  ********************************************/
 #define TF_HME_MV_SAD_TH 512 // SAD_TH beyond which a penalty is applied to hme_mv_cost
 #define TF_HME_MV_COST_WEIGHT 125 // MV_COST weight when the SAD_TH condition is valid
-EbBool check_mv_validity(int16_t x_mv, int16_t y_mv, uint8_t need_shift) {
+Bool check_mv_validity(int16_t x_mv, int16_t y_mv, uint8_t need_shift) {
     MV mv;
     //go to 1/8th if input is 1/4pel
     mv.row = y_mv << need_shift;
@@ -47,9 +47,9 @@ EbBool check_mv_validity(int16_t x_mv, int16_t y_mv, uint8_t need_shift) {
       -2048 < MV_x_in_full_pel or MV_y_in_full_pel < 2048
     */
     if (!is_mv_valid(&mv)) {
-        return EB_FALSE;
+        return FALSE;
     }
-    return EB_TRUE;
+    return TRUE;
 }
 
 #define MAX_INTRA_IN_MD 9
@@ -123,7 +123,7 @@ void svt_ext_sad_calculation_8x8_16x16_c(uint8_t *src, uint32_t src_stride, uint
                                          uint32_t ref_stride, uint32_t *p_best_sad_8x8,
                                          uint32_t *p_best_sad_16x16, uint32_t *p_best_mv8x8,
                                          uint32_t *p_best_mv16x16, uint32_t mv,
-                                         uint32_t *p_sad16x16, uint32_t *p_sad8x8, EbBool sub_sad) {
+                                         uint32_t *p_sad16x16, uint32_t *p_sad8x8, Bool sub_sad) {
     uint32_t sad16x16;
 
     if (sub_sad) {
@@ -235,7 +235,7 @@ static void svt_ext_eight_sad_calculation_8x8_16x16(
     uint8_t *src, uint32_t src_stride, uint8_t *ref, uint32_t ref_stride, uint32_t mv,
     uint32_t start_16x16_pos, uint32_t *p_best_sad_8x8, uint32_t *p_best_sad_16x16,
     uint32_t *p_best_mv8x8, uint32_t *p_best_mv16x16, uint32_t p_eight_sad16x16[16][8],
-    uint32_t p_eight_sad8x8[64][8], EbBool sub_sad) {
+    uint32_t p_eight_sad8x8[64][8], Bool sub_sad) {
     const uint32_t start_8x8_pos = 4 * start_16x16_pos;
     int16_t        x_mv, y_mv;
 
@@ -362,7 +362,7 @@ void svt_ext_all_sad_calculation_8x8_16x16_c(uint8_t *src, uint32_t src_stride, 
                                              uint32_t *p_best_sad_8x8, uint32_t *p_best_sad_16x16,
                                              uint32_t *p_best_mv8x8, uint32_t *p_best_mv16x16,
                                              uint32_t p_eight_sad16x16[16][8],
-                                             uint32_t p_eight_sad8x8[64][8], EbBool sub_sad) {
+                                             uint32_t p_eight_sad8x8[64][8], Bool sub_sad) {
     static const char offsets[16] = {0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15};
     (void)out_8x8;
     //---- 16x16 : 0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15
@@ -465,7 +465,7 @@ static void open_loop_me_get_eight_search_point_results_block(
 ) {
     // uint32_t ref_luma_stride = ref_pic_ptr->stride_y; // NADER
     // uint8_t  *ref_ptr = ref_pic_ptr->buffer_y; // NADER
-    const EbBool sub_sad         = (context_ptr->me_search_method == SUB_SAD_SEARCH);
+    const Bool sub_sad         = (context_ptr->me_search_method == SUB_SAD_SEARCH);
     uint32_t     ref_luma_stride = context_ptr->interpolated_full_stride[list_index][ref_pic_index];
     uint8_t *    ref_ptr         = context_ptr->integer_buffer_ptr[list_index][ref_pic_index] +
         ((ME_FILTER_TAP >> 1) * context_ptr->interpolated_full_stride[list_index][ref_pic_index]) +
@@ -511,7 +511,7 @@ static void open_loop_me_get_search_point_results_block(
     int32_t y_search_index) // input parameter, search region position in the
 // vertical direction, used to derive yMV
 {
-    const EbBool sub_sad = (context_ptr->me_search_method == SUB_SAD_SEARCH);
+    const Bool sub_sad = (context_ptr->me_search_method == SUB_SAD_SEARCH);
     uint8_t *    src_ptr = context_ptr->b64_src_ptr;
 
     // uint8_t  *ref_ptr = ref_pic_ptr->buffer_y; // NADER
@@ -1289,8 +1289,8 @@ void integer_search_b64(PictureParentControlSet *pcs_ptr, uint32_t b64_index, ui
     SequenceControlSet *scs_ptr        = pcs_ptr->scs_ptr;
     int16_t             picture_width  = pcs_ptr->aligned_width;
     int16_t             picture_height = pcs_ptr->aligned_height;
-    uint32_t            b64_width       = (input_ptr->width - b64_origin_x) < BLOCK_SIZE_64 ? input_ptr->width - b64_origin_x : BLOCK_SIZE_64;
-    uint32_t            b64_height      = (input_ptr->height - b64_origin_y) < BLOCK_SIZE_64 ? input_ptr->height - b64_origin_y : BLOCK_SIZE_64;
+    uint32_t            b64_width      = context_ptr->b64_width;
+    uint32_t            b64_height     = context_ptr->b64_height;
     int16_t             pad_width      = (int16_t)BLOCK_SIZE_64 - 1;
     int16_t             pad_height     = (int16_t)BLOCK_SIZE_64 - 1;
     int16_t             origin_x       = (int16_t)b64_origin_x;
@@ -1363,7 +1363,7 @@ void integer_search_b64(PictureParentControlSet *pcs_ptr, uint32_t b64_index, ui
                 if (!scs_ptr->ipp_pass_ctrls.bypass_zz_check ||
                     context_ptr->me_type != ME_FIRST_PASS)
                     if ((x_search_center != 0 || y_search_center != 0) &&
-                        (context_ptr->is_used_as_reference_flag == EB_TRUE)) {
+                        (context_ptr->is_used_as_reference_flag == TRUE)) {
 
                         best_hme_sad = check_00_center(
                             ref_pic_ptr,
@@ -1403,14 +1403,14 @@ void integer_search_b64(PictureParentControlSet *pcs_ptr, uint32_t b64_index, ui
             y_search_area_origin = y_search_center - (search_area_height >> 1);
 
             if (scs_ptr->static_config.restricted_motion_vector) {
-                // sb_params_array in scs and ppcs are different when super-res is enabled
+                // b64_geom in scs and ppcs are different when super-res is enabled
                 // ME_OPEN_LOOP is performed on downscaled frames while others (ME_MCTF and ME_FIRST_PASS) are performed on unscaled frames
-                SbParams *sb_params_array = context_ptr->me_type != ME_OPEN_LOOP
-                    ? scs_ptr->sb_params_array
-                    : pcs_ptr->sb_params_array;
+                B64Geom *b64_geom = context_ptr->me_type != ME_OPEN_LOOP
+                    ? scs_ptr->b64_geom
+                    : pcs_ptr->b64_geom;
 
-                int       tile_start_x    = sb_params_array[b64_index].tile_start_x;
-                int       tile_end_x      = sb_params_array[b64_index].tile_end_x;
+                int       tile_start_x    = b64_geom[b64_index].tile_start_x;
+                int       tile_end_x      = b64_geom[b64_index].tile_end_x;
 
                 // Correct the left edge of the Search Area if it is not on the
                 // reference Picture
@@ -1465,14 +1465,14 @@ void integer_search_b64(PictureParentControlSet *pcs_ptr, uint32_t b64_index, ui
                                                             : search_area_width & ~0x07;
             }
             if (scs_ptr->static_config.restricted_motion_vector) {
-                // sb_params_array in scs and ppcs are different when super-res is enabled
+                // b64_geom in scs and ppcs are different when super-res is enabled
                 // ME_OPEN_LOOP is performed on downscaled frames while others (ME_MCTF and ME_FIRST_PASS) are performed on unscaled frames
-                SbParams *sb_params_array = context_ptr->me_type != ME_OPEN_LOOP
-                    ? scs_ptr->sb_params_array
-                    : pcs_ptr->sb_params_array;
+                B64Geom *b64_geom = context_ptr->me_type != ME_OPEN_LOOP
+                    ? scs_ptr->b64_geom
+                    : pcs_ptr->b64_geom;
 
-                int       tile_start_y    = sb_params_array[b64_index].tile_start_y;
-                int       tile_end_y      = sb_params_array[b64_index].tile_end_y;
+                int       tile_start_y    = b64_geom[b64_index].tile_start_y;
+                int       tile_end_y      = b64_geom[b64_index].tile_end_y;
 
                 // Correct the top edge of the Search Area if it is not on the
                 // reference Picture
@@ -1743,7 +1743,7 @@ uint32_t get_zz_sad(EbPictureBufferDesc *ref_pic_ptr, MeContext *context_ptr, ui
 // Determine if pre-HME for the current picture and search region should be skipped.
 // Return 1 if can early exit (i.e. skip pre-hme for current frame and search region)
 // Return 0 if can't skip
-static EbBool check_prehme_early_exit(MeContext *ctx, uint8_t list_i, uint8_t ref_i, uint8_t sr_i) {
+static Bool check_prehme_early_exit(MeContext *ctx, uint8_t list_i, uint8_t ref_i, uint8_t sr_i) {
     SearchInfo *prehme_data = &ctx->prehme_data[list_i][ref_i][sr_i];
 
     if (ctx->me_early_exit_th) {
@@ -1772,8 +1772,8 @@ static EbBool check_prehme_early_exit(MeContext *ctx, uint8_t list_i, uint8_t re
 /* Perform Pre-HME for one Block 64x64*/
 static void prehme_b64(PictureParentControlSet *pcs, uint32_t origin_x, uint32_t origin_y,
                        MeContext *ctx, EbPictureBufferDesc *input_ptr) {
-    const uint32_t block_width  = ctx->block_width;
-    const uint32_t block_height = ctx->block_height;
+    const uint32_t block_width  = ctx->b64_width;
+    const uint32_t block_height = ctx->b64_height;
     // List Loop
     for (int list_i = REF_LIST_0; list_i < ctx->num_of_list_to_search; ++list_i) {
         // Ref Picture Loop
@@ -1898,8 +1898,8 @@ static void get_hme_l0_search_area(MeContext *context_ptr, uint8_t list_index,
  *******************************************/
 static void hme_level0_b64(PictureParentControlSet *pcs, uint32_t origin_x, uint32_t origin_y,
                            MeContext *ctx, EbPictureBufferDesc *input_ptr) {
-    const uint32_t block_width  = ctx->block_width;
-    const uint32_t block_height = ctx->block_height;
+    const uint32_t block_width  = ctx->b64_width;
+    const uint32_t block_height = ctx->b64_height;
 
     // store base HME sizes, to be used if using ref-index based HME resizing
     SearchAreaMinMax base_hme_sa;
@@ -2008,8 +2008,8 @@ static void hme_level0_b64(PictureParentControlSet *pcs, uint32_t origin_x, uint
  *******************************************/
 void hme_level1_b64(PictureParentControlSet *pcs, uint32_t origin_x, uint32_t origin_y,
                     MeContext *ctx, EbPictureBufferDesc *input_ptr) {
-    const uint32_t block_width  = ctx->block_width;
-    const uint32_t block_height = ctx->block_height;
+    const uint32_t block_width  = ctx->b64_width;
+    const uint32_t block_height = ctx->b64_height;
 
     // List Loop
     const uint8_t num_of_list_to_search = ctx->num_of_list_to_search;
@@ -2072,8 +2072,8 @@ void hme_level1_b64(PictureParentControlSet *pcs, uint32_t origin_x, uint32_t or
  *******************************************/
 static void hme_level2_b64(PictureParentControlSet *pcs, uint32_t origin_x, uint32_t origin_y,
                            MeContext *ctx, EbPictureBufferDesc *input_ptr) {
-    const uint32_t block_width  = ctx->block_width;
-    const uint32_t block_height = ctx->block_height;
+    const uint32_t block_width  = ctx->b64_width;
+    const uint32_t block_height = ctx->b64_height;
     // List Loop
     const uint8_t num_of_list_to_search = ctx->num_of_list_to_search;
     for (int list_index = REF_LIST_0; list_index < num_of_list_to_search; ++list_index) {
@@ -2130,9 +2130,9 @@ void set_final_seach_centre_sb(PictureParentControlSet *pcs_ptr, MeContext *cont
     uint32_t list_index;
     uint8_t  ref_pic_index;
     // Configure HME level 0, level 1 and level 2 from static config parameters
-    EbBool enable_hme_level0_flag = context_ptr->enable_hme_level0_flag;
-    EbBool enable_hme_level1_flag = context_ptr->enable_hme_level1_flag;
-    EbBool enable_hme_level2_flag = context_ptr->enable_hme_level2_flag;
+    Bool enable_hme_level0_flag = context_ptr->enable_hme_level0_flag;
+    Bool enable_hme_level1_flag = context_ptr->enable_hme_level1_flag;
+    Bool enable_hme_level2_flag = context_ptr->enable_hme_level2_flag;
 
     uint64_t best_cost         = (uint64_t)~0;
     context_ptr->best_list_idx = 0;
@@ -2316,8 +2316,8 @@ void set_final_seach_centre_sb(PictureParentControlSet *pcs_ptr, MeContext *cont
 }
 // Initialize zz SAD array
 void init_zz_sad(MeContext *ctx, uint32_t origin_x, uint32_t origin_y) {
-    const uint32_t block_width  = ctx->block_width;
-    const uint32_t block_height = ctx->block_height;
+    const uint32_t block_width  = ctx->b64_width;
+    const uint32_t block_height = ctx->b64_height;
     // List Loop
     for (int list_i = REF_LIST_0; list_i < ctx->num_of_list_to_search; ++list_i) {
         // Ref Picture Loop
@@ -2813,14 +2813,14 @@ void perform_gm_detection(
 // Compute the distortion per block size based on the ME results
 void compute_distortion(
     PictureParentControlSet *pcs_ptr, // input parameter, Picture Control Set Ptr
-    uint32_t                 sb_index, // input parameter, SB Index
+    uint32_t                 b64_index, // input parameter, B64 Index
     MeContext
         *context_ptr // input parameter, ME Context Ptr, used to store decimated/interpolated SB/SR
 ) {
     SequenceControlSet *scs_ptr = pcs_ptr->scs_ptr;
     // Determine sb_64x64_me_class
-    SbParams *sb_params  = &pcs_ptr->sb_params_array[sb_index];
-    uint32_t  sb_size    = 64 * 64;
+    B64Geom *b64_geom  = &pcs_ptr->b64_geom[b64_index];
+    uint32_t  b64_size    = 64 * 64;
     uint32_t  dist_64x64 = 0, dist_32x32 = 0, dist_16x16 = 0, dist_8x8 = 0;
 
     // 64x64
@@ -2842,26 +2842,18 @@ void compute_distortion(
         sum_ofsq_dist_8x8 += diff * diff;
     }
 
-    pcs_ptr->me_8x8_cost_variance[sb_index] = (uint32_t)(sum_ofsq_dist_8x8 / 64);
+    pcs_ptr->me_8x8_cost_variance[b64_index] = (uint32_t)(sum_ofsq_dist_8x8 / 64);
     // Compute the sum of the distortion of all 16 16x16 (720 and above) and
     // 64 8x8 (for lower resolutions) blocks in the SB
-    pcs_ptr->rc_me_distortion[sb_index] = (scs_ptr->input_resolution <= INPUT_SIZE_480p_RANGE)
+    pcs_ptr->rc_me_distortion[b64_index] = (scs_ptr->input_resolution <= INPUT_SIZE_480p_RANGE)
         ? dist_8x8
         : dist_16x16;
-    const uint32_t pix_num              = sb_params->width * sb_params->height;
+    const uint32_t pix_num              = b64_geom->width * b64_geom->height;
     // Normalize
-    pcs_ptr->me_64x64_distortion[sb_index] = (((dist_64x64 * sb_size) / (pix_num)) *
-                                              context_ptr->stat_factor) /
-        100;
-    pcs_ptr->me_32x32_distortion[sb_index] = (((dist_32x32 * sb_size) / (pix_num)) *
-                                              context_ptr->stat_factor) /
-        100;
-    pcs_ptr->me_16x16_distortion[sb_index] = (((dist_16x16 * sb_size) / (pix_num)) *
-                                              context_ptr->stat_factor) /
-        100;
-    pcs_ptr->me_8x8_distortion[sb_index] = (((dist_8x8 * sb_size) / (pix_num)) *
-                                            context_ptr->stat_factor) /
-        100;
+    pcs_ptr->me_64x64_distortion[b64_index] = (dist_64x64 * b64_size) / (pix_num);
+    pcs_ptr->me_32x32_distortion[b64_index] = (dist_32x32 * b64_size) / (pix_num);
+    pcs_ptr->me_16x16_distortion[b64_index] = (dist_16x16 * b64_size) / (pix_num);
+    pcs_ptr->me_8x8_distortion[b64_index]   = (dist_8x8 * b64_size) / (pix_num);
 }
 
 // Initalize data used in ME/HME
@@ -2941,12 +2933,17 @@ EbErrorType motion_estimation_b64(
 
     uint32_t num_of_list_to_search = context_ptr->num_of_list_to_search;
 
-    context_ptr->block_width  = (input_ptr->width - b64_origin_x) < BLOCK_SIZE_64
-        ? input_ptr->width - b64_origin_x
-        : BLOCK_SIZE_64;
-    context_ptr->block_height = (input_ptr->height - b64_origin_y) < BLOCK_SIZE_64
-        ? input_ptr->height - b64_origin_y
-        : BLOCK_SIZE_64;
+    // input picture width and height might be disaligned after resizing
+    // we use aligned width and height to avoid disalignment of calculation
+    // of block size
+    uint16_t aligned_width  = (uint16_t)ALIGN_POWER_OF_TWO(input_ptr->width, 3);
+    uint16_t aligned_height = (uint16_t)ALIGN_POWER_OF_TWO(input_ptr->height, 3);
+    context_ptr->b64_width  = (aligned_width - b64_origin_x) < BLOCK_SIZE_64
+                              ? aligned_width - b64_origin_x
+                              : BLOCK_SIZE_64;
+    context_ptr->b64_height = (aligned_height - b64_origin_y) < BLOCK_SIZE_64
+                              ? aligned_height - b64_origin_y
+                              : BLOCK_SIZE_64;
 
     //pruning of the references is not done for alt-ref / when HMeLevel2 not done
     uint8_t prune_ref = context_ptr->enable_hme_flag && context_ptr->me_type != ME_MCTF;
@@ -3001,7 +2998,7 @@ EbErrorType motion_estimation_b64(
     return return_error;
 }
 
-EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t sb_index,
+EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t b64_index,
                                       EbPictureBufferDesc *input_ptr) {
     EbErrorType         return_error = EB_ErrorNone;
     SequenceControlSet *scs_ptr      = pcs_ptr->scs_ptr;
@@ -3009,13 +3006,13 @@ EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t
     uint32_t      cu_origin_x;
     uint32_t      cu_origin_y;
     uint32_t      pa_blk_index = 0;
-    SbParams *    sb_params    = &scs_ptr->sb_params_array[sb_index];
+    B64Geom *    b64_geom    = &scs_ptr->b64_geom[b64_index];
     OisMbResults *ois_mb_results_ptr;
     uint8_t *     above_row;
     uint8_t *     left_col;
     uint8_t *     above0_row;
     uint8_t *     left0_col;
-    uint32_t      mb_stride = (scs_ptr->seq_header.max_frame_width + 15) / 16;
+    uint32_t      mb_stride = (scs_ptr->max_input_luma_width + 15) / 16;
 
     DECLARE_ALIGNED(16, uint8_t, left0_data[MAX_TX_SIZE * 2 + 32]);
     DECLARE_ALIGNED(16, uint8_t, above0_data[MAX_TX_SIZE * 2 + 32]);
@@ -3031,28 +3028,28 @@ EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t
         const CodedBlockStats *blk_stats_ptr;
         blk_stats_ptr              = get_coded_blk_stats(pa_blk_index);
         uint8_t bsize              = blk_stats_ptr->size;
-        EbBool  small_boundary_blk = EB_FALSE;
+        Bool  small_boundary_blk = FALSE;
 
         //if(sb_params->raster_scan_blk_validity[md_scan_to_raster_scan[pa_blk_index]])
         {
-            cu_origin_x = sb_params->origin_x + blk_stats_ptr->origin_x;
-            cu_origin_y = sb_params->origin_y + blk_stats_ptr->origin_y;
+            cu_origin_x = b64_geom->origin_x + blk_stats_ptr->origin_x;
+            cu_origin_y = b64_geom->origin_y + blk_stats_ptr->origin_y;
             if ((blk_stats_ptr->origin_x % 16) == 0 && (blk_stats_ptr->origin_y % 16) == 0 &&
                 ((pcs_ptr->enhanced_picture_ptr->width - cu_origin_x) < 16 ||
                  (pcs_ptr->enhanced_picture_ptr->height - cu_origin_y) < 16))
-                small_boundary_blk = EB_TRUE;
+                small_boundary_blk = TRUE;
         }
 
         if (bsize != 16 && !small_boundary_blk) {
             pa_blk_index++;
             continue;
         }
-        if (sb_params->raster_scan_blk_validity[md_scan_to_raster_scan[pa_blk_index]]) {
+        if (b64_geom->raster_scan_blk_validity[md_scan_to_raster_scan[pa_blk_index]]) {
             // always process as block16x16 even bsize or tx_size is 8x8
             TxSize tx_size = TX_16X16;
             bsize          = 16;
-            cu_origin_x    = sb_params->origin_x + blk_stats_ptr->origin_x;
-            cu_origin_y    = sb_params->origin_y + blk_stats_ptr->origin_y;
+            cu_origin_x    = b64_geom->origin_x + blk_stats_ptr->origin_x;
+            cu_origin_y    = b64_geom->origin_y + blk_stats_ptr->origin_y;
             above0_row     = above0_data + 16;
             left0_col      = left0_data + 16;
             above_row      = above_data + 16;
@@ -3078,16 +3075,7 @@ EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t
                                                        bsize);
             uint8_t        ois_intra_mode;
             uint8_t        intra_mode_start = DC_PRED;
-            EbBool         enable_paeth   = pcs_ptr->scs_ptr->enable_paeth == DEFAULT
-                          ? EB_TRUE
-                          : (EbBool)pcs_ptr->scs_ptr->enable_paeth;
-            EbBool         enable_smooth  = pcs_ptr->scs_ptr->enable_smooth == DEFAULT
-                         ? EB_TRUE
-                         : (EbBool)pcs_ptr->scs_ptr->enable_smooth;
-            uint8_t        intra_mode_end = pcs_ptr->tpl_ctrls.tpl_opt_flag ? DC_PRED
-                       : enable_paeth                                       ? PAETH_PRED
-                       : enable_smooth                                      ? SMOOTH_H_PRED
-                                                                            : D67_PRED;
+            uint8_t intra_mode_end = pcs_ptr->tpl_ctrls.intra_mode_end;
             PredictionMode best_mode      = DC_PRED;
             int64_t        best_intra_cost = INT64_MAX;
 
@@ -3105,8 +3093,8 @@ EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t
                     left_col  = left_data + 16;
                     filter_intra_edge(ois_mb_results_ptr,
                                       ois_intra_mode,
-                                      scs_ptr->seq_header.max_frame_width,
-                                      scs_ptr->seq_header.max_frame_height,
+                                      scs_ptr->max_input_luma_width,
+                                      scs_ptr->max_input_luma_height,
                                       p_angle,
                                       (int32_t)cu_origin_x,
                                       (int32_t)cu_origin_y,
@@ -3128,8 +3116,7 @@ EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t
                                               16);
                 // Distortion
                 int64_t intra_cost;
-                if (pcs_ptr->tpl_ctrls.tpl_opt_flag &&
-                    pcs_ptr->tpl_ctrls.use_pred_sad_in_intra_search) {
+                if (pcs_ptr->tpl_ctrls.use_pred_sad_in_intra_search) {
                     intra_cost = svt_nxm_sad_kernel_sub_sampled(
                         src, input_ptr->stride_y, predictor, 16, 16, 16);
                 } else {
@@ -3143,9 +3130,7 @@ EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t
                                            predictor,
                                            16 << pcs_ptr->tpl_ctrls.subsample_tx);
 
-                    EB_TRANS_COEFF_SHAPE pf_shape = pcs_ptr->tpl_ctrls.tpl_opt_flag
-                        ? pcs_ptr->tpl_ctrls.pf_shape
-                        : DEFAULT_SHAPE;
+                    EB_TRANS_COEFF_SHAPE pf_shape = pcs_ptr->tpl_ctrls.pf_shape;
                     svt_av1_wht_fwd_txfm(src_diff,
                                          16 << pcs_ptr->tpl_ctrls.subsample_tx,
                                          coeff,
@@ -3167,7 +3152,7 @@ EbErrorType open_loop_intra_search_mb(PictureParentControlSet *pcs_ptr, uint32_t
             ois_mb_results_ptr->intra_mode = best_mode;
             ois_mb_results_ptr->intra_cost = best_intra_cost;
             //if(pcs_ptr->picture_number == 16 && cu_origin_x <= 15 && cu_origin_y == 0)
-            //    printf("open_loop_intra_search_mb cost0 poc%d sb_index=%d, mb_origin_xy=%d %d, best_mode=%d, best_intra_cost=%d, offset=%d, src[0~3]= %d %d %d %d\n", pcs_ptr->picture_number, sb_index, cu_origin_x, cu_origin_y, best_mode, best_intra_cost, (cu_origin_y >> 4) * mb_stride + (cu_origin_x >> 4), src[0], src[1], src[2], src[3]);
+            //    printf("open_loop_intra_search_mb cost0 poc%d b64_index=%d, mb_origin_xy=%d %d, best_mode=%d, best_intra_cost=%d, offset=%d, src[0~3]= %d %d %d %d\n", pcs_ptr->picture_number, b64_index, cu_origin_x, cu_origin_y, best_mode, best_intra_cost, (cu_origin_y >> 4) * mb_stride + (cu_origin_x >> 4), src[0], src[1], src[2], src[3]);
         }
         pa_blk_index++;
     }

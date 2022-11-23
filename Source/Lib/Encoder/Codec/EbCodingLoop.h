@@ -50,8 +50,12 @@ void store16bit_input_src(EbPictureBufferDesc *input_sample16bit_buffer, Picture
 
 void residual_kernel(uint8_t *input, uint32_t input_offset, uint32_t input_stride, uint8_t *pred,
                      uint32_t pred_offset, uint32_t pred_stride, int16_t *residual,
-                     uint32_t residual_offset, uint32_t residual_stride, EbBool hbd,
+                     uint32_t residual_offset, uint32_t residual_stride, Bool hbd,
                      uint32_t area_width, uint32_t area_height);
+
+EB_EXTERN EbErrorType svt_aom_check_high_freq(PictureControlSet *pcs, SuperBlock *sb_ptr,
+                                              ModeDecisionContext *ctx);
+
 static const uint16_t block_prob_tab[5][9][3][2] = {{{{75, 75}, {43, 43}, {17, 17}},
                                                      {{8, 9}, {29, 29}, {17, 17}},
                                                      {{6, 7}, {7, 7}, {17, 17}},

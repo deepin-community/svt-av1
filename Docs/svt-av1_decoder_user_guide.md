@@ -1,22 +1,28 @@
+[Top level](../README.md)
+
 # Scalable Video Technology for AV1 Decoder (SVT-AV1 Decoder) User Guide
 
 ## Table of Contents
 
-1. [Introduction](#introduction)
-2. [Sample Application Guide](#sample-application-guide)
-    - [Running the decoder](#running-the-decoder)
-
+__[TOC]__
 ## Introduction
 
-This document describes how to use the Scalable Video Technology for AV1 Decoder (SVT-AV1). In particular, this user guide describes how to run the sample application with the respective dynamically linked library.
+This document describes how to use the Scalable Video Technology for AV1
+Decoder (SVT-AV1). In particular, this user guide describes how to run the
+sample application with the respective dynamically linked library.
 
 ## Sample Application Guide
 
-This section describes how to run the sample decoder application that uses the SVT-AV1 Decoder library. It describes the command line input parameters and the resulting outputs.
+This section describes how to run the sample decoder application that uses the
+SVT-AV1 Decoder library. It describes the command line input parameters and the
+resulting outputs.
 
 ### Running the decoder
 
-This section describes how to run the sample decoder application `SvtAv1DecApp.exe` (on Windows\*) or `SvtAv1DecApp` (on Linux\*) from the command line, including descriptions of the most commonly used input parameters and outputs.
+This section describes how to run the sample decoder application
+`SvtAv1DecApp.exe` (on Windows\*) or `SvtAv1DecApp` (on Linux\*) from the
+command line, including descriptions of the most commonly used input parameters
+and outputs.
 
 The sample application typically takes the following command line parameters:
 
@@ -34,7 +40,8 @@ The sample application typically takes the following command line parameters:
  -parallel-frames <arg>    Number of frames to be processed in parallel
  -md5                      MD5 support flag
  -fps-frm                  Show fps after each frame decoded
- -fps-summary              Show fps summary -skip-film-grain
+ -fps-summary              Show fps summary
+ -skip-film-grain          Disable Film Grain
 ```
 
 Sample usage: `SvtAv1DecApp.exe -i test.ivf -o out.yuv`

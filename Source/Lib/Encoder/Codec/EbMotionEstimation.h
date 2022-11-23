@@ -66,7 +66,7 @@ extern "C" {
         EbPictureBufferDesc       *input_ptr);
     extern EbErrorType open_loop_intra_search_mb(
         PictureParentControlSet *pcs_ptr,
-        uint32_t                   sb_index,
+        uint32_t                   b64_index,
         EbPictureBufferDesc       *input_ptr);
 #define a_b_c  0
 #define a_c_b  1
@@ -176,7 +176,7 @@ extern "C" {
         uint32_t *p_best_mv16x16,
         uint32_t p_eight_sad16x16[16][8],
         uint32_t p_eight_sad8x8[64][8],
-        EbBool sub_sad);
+        Bool sub_sad);
 
     /*******************************************
     Calculate SAD for 32x32,64x64 from 16x16

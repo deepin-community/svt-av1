@@ -31,17 +31,17 @@ static EbErrorType create_stats_buffer(FIRSTPASS_STATS **frame_stats_buffer,
     stats_buf_context->stats_in_end       = stats_buf_context->stats_in_start;
     stats_buf_context->stats_in_buf_end   = stats_buf_context->stats_in_start + size;
 
-    // stats_buf_context->total_left_stats = aom_calloc(1, sizeof(FIRSTPASS_STATS));
     EB_MALLOC_ARRAY(stats_buf_context->total_left_stats, 1);
     if (stats_buf_context->total_left_stats == NULL)
         return EB_ErrorInsufficientResources;
     svt_av1_twopass_zero_stats(stats_buf_context->total_left_stats);
-    // stats_buf_context->total_stats = aom_calloc(1, sizeof(FIRSTPASS_STATS));
     EB_MALLOC_ARRAY(stats_buf_context->total_stats, 1);
     if (stats_buf_context->total_stats == NULL)
         return EB_ErrorInsufficientResources;
     svt_av1_twopass_zero_stats(stats_buf_context->total_stats);
     stats_buf_context->last_frame_accumulated = -1;
+
+    EB_CREATE_MUTEX(stats_buf_context->stats_in_write_mutex);
     return res;
 }
 
@@ -50,6 +50,7 @@ static void destroy_stats_buffer(STATS_BUFFER_CTX *stats_buf_context,
     EB_FREE_ARRAY(stats_buf_context->total_left_stats);
     EB_FREE_ARRAY(stats_buf_context->total_stats);
     EB_FREE_ARRAY(frame_stats_buffer);
+    EB_DESTROY_MUTEX(stats_buf_context->stats_in_write_mutex);
 }
 static void encode_context_dctor(EbPtr p) {
     EncodeContext *obj = (EncodeContext *)p;
@@ -73,6 +74,11 @@ static void encode_context_dctor(EbPtr p) {
     EB_FREE(obj->stats_out.stat);
     destroy_stats_buffer(&obj->stats_buf_context, obj->frame_stats_buffer);
     EB_DELETE_PTR_ARRAY(obj->rc.coded_frames_stat_queue, CODED_FRAMES_STAT_QUEUE_MAX_DEPTH);
+
+    if (obj->rc_param_queue)
+        EB_FREE_2D(obj->rc_param_queue);
+    EB_DESTROY_MUTEX(obj->rc_param_queue_mutex);
+    EB_DESTROY_MUTEX(obj->rc.rc_mutex);
 }
 
 EbErrorType encode_context_ctor(EncodeContext *encode_context_ptr, EbPtr object_init_data_ptr) {
@@ -143,13 +149,13 @@ EbErrorType encode_context_ctor(EncodeContext *encode_context_ptr, EbPtr object_
                picture_index);
     }
 
-    encode_context_ptr->initial_picture = EB_TRUE;
+    encode_context_ptr->initial_picture = TRUE;
 
     // Sequence Termination Flags
     encode_context_ptr->terminating_picture_number = ~0u;
 
     // Signalling the need for a td structure to be written in the Bitstream - on when the sequence starts
-    encode_context_ptr->td_needed = EB_TRUE;
+    encode_context_ptr->td_needed = TRUE;
 
     EB_CREATE_MUTEX(encode_context_ptr->sc_buffer_mutex);
     encode_context_ptr->enc_mode                      = SPEED_CONTROL_INIT_MOD;
@@ -167,11 +173,36 @@ EbErrorType encode_context_ctor(EncodeContext *encode_context_ptr, EbPtr object_
     EB_ALLOC_PTR_ARRAY(encode_context_ptr->rc.coded_frames_stat_queue,
                        CODED_FRAMES_STAT_QUEUE_MAX_DEPTH);
 
+    EB_CREATE_MUTEX(encode_context_ptr->rc.rc_mutex);
     for (picture_index = 0; picture_index < CODED_FRAMES_STAT_QUEUE_MAX_DEPTH; ++picture_index) {
         EB_NEW(encode_context_ptr->rc.coded_frames_stat_queue[picture_index],
                rate_control_coded_frames_stats_context_ctor,
                picture_index);
     }
     encode_context_ptr->rc.min_bit_actual_per_gop = 0xfffffffffffff;
+    EB_MALLOC_2D(encode_context_ptr->rc_param_queue, (int32_t)PARALLEL_GOP_MAX_NUMBER, 1);
+
+    for (int interval_index = 0; interval_index < PARALLEL_GOP_MAX_NUMBER; interval_index++) {
+        encode_context_ptr->rc_param_queue[interval_index]->first_poc                = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->processed_frame_number   = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->size                     = -1;
+        encode_context_ptr->rc_param_queue[interval_index]->end_of_seq_seen          = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->last_i_qp                = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->vbr_bits_off_target      = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->vbr_bits_off_target_fast = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->rolling_target_bits =
+            encode_context_ptr->rc.avg_frame_bandwidth;
+        encode_context_ptr->rc_param_queue[interval_index]->rolling_actual_bits =
+            encode_context_ptr->rc.avg_frame_bandwidth;
+        encode_context_ptr->rc_param_queue[interval_index]->rate_error_estimate = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->total_actual_bits   = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->total_target_bits   = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->extend_minq         = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->extend_maxq         = 0;
+        encode_context_ptr->rc_param_queue[interval_index]->extend_minq_fast    = 0;
+    }
+    encode_context_ptr->rc_param_queue_head_index = 0;
+    EB_CREATE_MUTEX(encode_context_ptr->rc_param_queue_mutex);
+
     return EB_ErrorNone;
 }

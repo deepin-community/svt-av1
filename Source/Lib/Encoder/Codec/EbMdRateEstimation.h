@@ -62,6 +62,10 @@ extern "C" {
         EbBitFraction  mvd_bits[NUMBER_OF_MVD_CASES];
         // Partition
         int32_t partition_fac_bits[PARTITION_CONTEXTS][CDF_SIZE(EXT_PARTITION_TYPES)];
+        int32_t partition_vert_alike_fac_bits[PARTITION_CONTEXTS][CDF_SIZE(2)];
+        int32_t partition_horz_alike_fac_bits[PARTITION_CONTEXTS][CDF_SIZE(2)];
+        int32_t partition_vert_alike_128x128_fac_bits[PARTITION_CONTEXTS][CDF_SIZE(2)];
+        int32_t partition_horz_alike_128x128_fac_bits[PARTITION_CONTEXTS][CDF_SIZE(2)];
 
         // MV Mode
         int32_t skip_mode_fac_bits[SKIP_CONTEXTS][CDF_SIZE(2)];
@@ -188,7 +192,7 @@ extern "C" {
     ***************************************************************************/
     extern void av1_estimate_syntax_rate(
         MdRateEstimationContext      *md_rate_estimation_array,
-        EbBool                          is_i_slice,
+        Bool                          is_i_slice,
         uint8_t pic_filter_intra_level,
         uint8_t allow_screen_content_tools,
         uint8_t enable_restoration,
@@ -405,6 +409,14 @@ void update_part_stats(
     uint16_t                    tile_idx,
     int                         mi_row,
     int                         mi_col);
+
+/*
+* Returns the me-based qindex (used for lambda modulation only; not at Q/Q-1)
+*/
+uint8_t svt_aom_get_me_qindex(
+    struct PictureControlSet* pcs_ptr,
+    struct SuperBlock* sb_ptr,
+    uint8_t is_sb128);
 
 #ifdef __cplusplus
 }

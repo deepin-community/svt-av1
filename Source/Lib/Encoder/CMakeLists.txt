@@ -12,9 +12,9 @@
 # Encoder Library directory CMakeLists.txt
 
 # Shared Encoder Version
-set(ENC_VERSION_MAJOR 0)
-set(ENC_VERSION_MINOR 9)
-set(ENC_VERSION_PATCH 1)
+set(ENC_VERSION_MAJOR 1)
+set(ENC_VERSION_MINOR 3)
+set(ENC_VERSION_PATCH 0)
 set(ENC_VERSION ${ENC_VERSION_MAJOR}.${ENC_VERSION_MINOR}.${ENC_VERSION_PATCH})
 
 if(UNIX)
@@ -87,9 +87,7 @@ if(CMAKE_GENERATOR STREQUAL "Xcode")
     file(WRITE ${PROJECT_BINARY_DIR}/dummy.c "")
 endif()
 
-file(GLOB all_files
-    "*.h"
-    "*.c")
+set(all_files "")
 
 get_target_property(common_lib_source common_lib INTERFACE_SOURCES)
 if(common_lib_source)
