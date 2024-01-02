@@ -1,5 +1,79 @@
 # Changelog
 
+## [1.7.0] - 2023-08-23
+
+Encoder
+- Improve the tradeoffs for the random access mode across presets MR-M13:
+ - Quality improvements across all presets and metrics ranging from 0.3% to 4.5% in BD-rate (!2129)
+ - Spacing between presets [M1-M6] has been adjusted to account for the tradeoff improvements achieved
+  - As a user guidance when comparing v1.7 vs v1.6 in a convexhull encoding setup:
+   - v1.7.0 M2 is now at similar quality levels as v1.6.0 M1 while being ~50% faster
+   - v1.7.0 M3 is now at similar quality levels as v1.6.0 M2 while being ~50% faster
+   - v1.7.0 M4 is now at similar quality levels as v1.6.0 M3 while being ~40% faster
+   - v1.7.0 M5 is now at similar quality levels as v1.6.0 M4 while being ~30% faster
+   - v1.7.0 M6 is now at similar quality levels as v1.6.0 M5 while being ~25% faster
+- Added an experimental tune SSIM mode yielding ~3-4% additional SSIM BD-rate gains (!2109)
+
+Build, cleanup and bug fixes
+- Various cleanups and functional bug fixes
+- Fix build conflict with libaom
+
+## [1.6.0] - 2023-06-18
+
+Encoder
+- Improve the tradeoffs for the random access mode across presets M1-M13:
+ - Speeding up the higher quality presets by 30-40%
+ - Improving the BD-rate by 1-2% for the faster presets
+- Improve the tradeoffs for the low delay mode for both scrren content and non-screen content encoding modes
+- Add a toggle to remove the legacy one-frame buffer at the input of the pipeline alowing the low delay mode to operate at sub-frame processing latencies
+- Add a new API allowing the user to specify quantization offsets for a region of interest per frame
+
+Build, cleanup and bug fixes
+- Various cleanups and functional bug fixes
+- Fix the startup minigop size BD-rate loss
+- Add ability to run the ci-testing offline
+
+## [1.5.0] - 2023-04-25
+
+Encoder
+- Optimize the tradeoffs for M0-M13 speeding up M5-M1 by 15-30% and improving the BDR of M6-M13 by 1-3%
+- Create a new preset MR (--preset -1) to be the quality reference
+- Optimize the tradeoffs for M8-M13 in the low delay encoding mode (!2052 !2096 and !2102) for SC and non-SC modes
+- Add dynamic minigop support for the random access configuration enabled by default in M9 and below
+- Add support to allow users to specify lambda scaling factors through the commandline
+- Rewrite the gstreamer plugin and updating it to be uptodate with the latest API changes
+- Add skip frames feature allowing the user to start encoding after n frames in the file
+- Add ability to specify a smaller startup minigop size for every gop to enable faster prefetching
+- Fix segmentation support and re-enable it with --aq-mode 1 to allow work on the region of interest API
+- Add padding bytes to the EbSvtAv1EncConfiguration configuration structure keep its size unchanged until v2.0
+
+Build, Cleanup and Documentation
+- Major cleanups for unused variables, static functions, and comments formatting
+- Reduce the size of variables
+- Refine app level parsing and reference scaling API calls in the application
+- Add dynamic minigop documentation along with updating the documentation accordingly
+
+## [1.4.1] - 2022-12-12
+
+Bugfixes:
+- Fix CRF with maxrate bug causing bitrate to be significantly limited for CRF encodings
+- Fix command line parsing forcing 1-pass in a 2-pass encoding mode when the --keyint=`x`s format is used
+- Fix decoder segfault due to assuming aligned buffers in the inverse transform assembly
+
+## [1.4.0] - 2022-11-30
+
+Encoder
+- Adopted the 6L / 32-picture mini-GOP configuraion as default and adjusted MD feature levels accordingly yielding higher compression efficiency gains
+- Update the TPL model to account for the larger mini-gop size
+- Re-tune presets M0-M12 using the gained coding efficiency for improved quality vs cycles tradeoffs
+- Allow duplicate commandline parameters to be parsed and take into consideration the latter to allow AWCY integration
+
+Build, Cleanup and Documentation
+- Make include and lib paths friendly to abs and rel paths
+- Update preset and API documentation
+- Various functional bug fixes
+- Remove manual prediction structure support
+
 ## [1.3.0] - 2022-10-18
 
 Encoder

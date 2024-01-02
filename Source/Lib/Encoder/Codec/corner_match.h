@@ -11,22 +11,22 @@
 #ifndef AOM_AV1_ENCODER_CORNER_MATCH_H_
 #define AOM_AV1_ENCODER_CORNER_MATCH_H_
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <memory.h>
-
-#define MATCH_SZ 13
-#define MATCH_SZ_BY2 ((MATCH_SZ - 1) / 2)
-#define MATCH_SZ_SQ (MATCH_SZ * MATCH_SZ)
+#include "EbDebugMacros.h"
+#include "EbDefinitions.h"
 
 typedef struct {
     int x, y;
     int rx, ry;
 } Correspondence;
 
-int svt_av1_determine_correspondence(unsigned char *frm, int *frm_corners, int num_frm_corners,
-                                     unsigned char *ref, int *ref_corners, int num_ref_corners,
-                                     int width, int height, int frm_stride, int ref_stride,
-                                     int *correspondence_pts);
+int svt_av1_determine_correspondence(unsigned char *frm, int *frm_corners, int num_frm_corners, unsigned char *ref,
+                                     int *ref_corners, int num_ref_corners, int width, int height, int frm_stride,
+                                     int ref_stride, int *correspondence_pts, uint8_t match_sz);
+
+DECLARE_ALIGNED(16, extern const uint8_t, svt_aom_compute_cross_byte_mask[8][16]);
 
 #endif // AOM_AV1_ENCODER_CORNER_MATCH_H_

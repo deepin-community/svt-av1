@@ -29,7 +29,7 @@ static void output_bitstream_unit_dctor(EbPtr p) {
 /**********************************
  * Constructor
  **********************************/
-EbErrorType output_bitstream_unit_ctor(OutputBitstreamUnit *bitstream_ptr, uint32_t buffer_size) {
+EbErrorType svt_aom_output_bitstream_unit_ctor(OutputBitstreamUnit *bitstream_ptr, uint32_t buffer_size) {
     bitstream_ptr->dctor = output_bitstream_unit_dctor;
     if (buffer_size) {
         bitstream_ptr->size = buffer_size;
@@ -47,7 +47,7 @@ EbErrorType output_bitstream_unit_ctor(OutputBitstreamUnit *bitstream_ptr, uint3
 /**********************************
  * Reset Bitstream
  **********************************/
-EbErrorType output_bitstream_reset(OutputBitstreamUnit *bitstream_ptr) {
+EbErrorType svt_aom_output_bitstream_reset(OutputBitstreamUnit *bitstream_ptr) {
     EbErrorType return_error = EB_ErrorNone;
 
     // Reset the write ptr to the beginning of the buffer
@@ -70,8 +70,7 @@ void svt_aom_daala_start_encode(DaalaWriter *br, OutputBitstreamUnit *source) {
 }
 
 /* Realloc when bitstream pointer size is not enough to write data of size sz */
-EbErrorType svt_realloc_output_bitstream_unit(OutputBitstreamUnit *output_bitstream_ptr,
-                                              uint32_t             sz) {
+EbErrorType svt_realloc_output_bitstream_unit(OutputBitstreamUnit *output_bitstream_ptr, uint32_t sz) {
     if (output_bitstream_ptr && sz > 0) {
         // Must add offset to realloc'd buffer to save any previously written bits
         uint64_t offset = output_bitstream_ptr->buffer_av1 - output_bitstream_ptr->buffer_begin_av1;

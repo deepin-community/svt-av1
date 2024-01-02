@@ -13,7 +13,6 @@
 #define EbEncDecProcess_h
 
 #include "EbDefinitions.h"
-#include "EbSyntaxElements.h"
 #include "EbModeDecisionProcess.h"
 #include "EbSystemResourceManager.h"
 #include "EbPictureBufferDesc.h"
@@ -39,7 +38,7 @@ typedef struct EncDecContext {
     EbFifo              *enc_dec_output_fifo_ptr;
     EbFifo              *enc_dec_feedback_fifo_ptr;
     EbFifo              *picture_demux_output_fifo_ptr; // to picture-manager
-    ModeDecisionContext *md_context;
+    ModeDecisionContext *md_ctx;
     const BlockGeom     *blk_geom;
     // Coding Unit Workspace---------------------------
     EbPictureBufferDesc *residual_buffer;
@@ -55,8 +54,8 @@ typedef struct EncDecContext {
     //  Context Variables---------------------------------
     BlkStruct *blk_ptr;
     //const CodedBlockStats                *cu_stats;
-    uint16_t      blk_origin_x; // within the picture
-    uint16_t      blk_origin_y; // within the picture
+    uint16_t      blk_org_x; // within the picture
+    uint16_t      blk_org_y; // within the picture
     uint32_t      sb_index;
     MvUnit        mv_unit;
     uint8_t       txb_itr;
@@ -83,15 +82,13 @@ typedef struct EncDecContext {
 } EncDecContext;
 
 /**************************************
-     * Extern Function Declarations
-     **************************************/
-extern EbErrorType enc_dec_context_ctor(EbThreadContext   *thread_context_ptr,
-                                        const EbEncHandle *enc_handle_ptr, int index,
-                                        int tasks_index);
+ * Extern Function Declarations
+ **************************************/
+extern EbErrorType svt_aom_enc_dec_context_ctor(EbThreadContext *thread_ctx, const EbEncHandle *enc_handle_ptr,
+                                                int index, int tasks_index);
 
-extern void *mode_decision_kernel(void *input_ptr);
-void         svt_aom_set_dist_based_ref_pruning_controls(ModeDecisionContext *ctx,
-                                                         uint8_t              dist_based_ref_pruning_level);
+extern void *svt_aom_mode_decision_kernel(void *input_ptr);
+
 #ifdef __cplusplus
 }
 #endif

@@ -31,8 +31,7 @@
 static const double erroradv_tr[]      = {0.65, 0.60, 0.65};
 static const double erroradv_prod_tr[] = {20000, 18000, 16000};
 
-int svt_av1_is_enough_erroradvantage(double best_erroradvantage, int params_cost,
-                                     int erroradv_type) {
+int svt_av1_is_enough_erroradvantage(double best_erroradvantage, int params_cost, int erroradv_type) {
     assert(erroradv_type < GM_ERRORADV_TR_TYPES);
     return best_erroradvantage < erroradv_tr[erroradv_type] &&
         best_erroradvantage * params_cost < erroradv_prod_tr[erroradv_type];
@@ -43,8 +42,8 @@ static void convert_to_params(const double *params, int32_t *model) {
     int alpha_present = 0;
     model[0]          = (int32_t)floor(params[0] * (1 << GM_TRANS_PREC_BITS) + 0.5);
     model[1]          = (int32_t)floor(params[1] * (1 << GM_TRANS_PREC_BITS) + 0.5);
-    model[0] = (int32_t)clamp(model[0], GM_TRANS_MIN, GM_TRANS_MAX) * GM_TRANS_DECODE_FACTOR;
-    model[1] = (int32_t)clamp(model[1], GM_TRANS_MIN, GM_TRANS_MAX) * GM_TRANS_DECODE_FACTOR;
+    model[0]          = (int32_t)clamp(model[0], GM_TRANS_MIN, GM_TRANS_MAX) * GM_TRANS_DECODE_FACTOR;
+    model[1]          = (int32_t)clamp(model[1], GM_TRANS_MIN, GM_TRANS_MAX) * GM_TRANS_DECODE_FACTOR;
 
     for (i = 2; i < 6; ++i) {
         const int diag_value = ((i == 2 || i == 5) ? (1 << GM_ALPHA_PREC_BITS) : 0);
@@ -55,8 +54,7 @@ static void convert_to_params(const double *params, int32_t *model) {
     }
     for (; i < 8; ++i) {
         model[i] = (int32_t)floor(params[i] * (1 << GM_ROW3HOMO_PREC_BITS) + 0.5);
-        model[i] = (int32_t)clamp(model[i], GM_ROW3HOMO_MIN, GM_ROW3HOMO_MAX) *
-            GM_ROW3HOMO_DECODE_FACTOR;
+        model[i] = (int32_t)clamp(model[i], GM_ROW3HOMO_MIN, GM_ROW3HOMO_MAX) * GM_ROW3HOMO_DECODE_FACTOR;
         alpha_present |= (model[i] != 0);
     }
 
@@ -69,8 +67,8 @@ static void convert_to_params(const double *params, int32_t *model) {
 }
 
 static INLINE TransformationType get_wmtype(const EbWarpedMotionParams *gm) {
-    if (gm->wmmat[5] == (1 << WARPEDMODEL_PREC_BITS) && !gm->wmmat[4] &&
-        gm->wmmat[2] == (1 << WARPEDMODEL_PREC_BITS) && !gm->wmmat[3]) {
+    if (gm->wmmat[5] == (1 << WARPEDMODEL_PREC_BITS) && !gm->wmmat[4] && gm->wmmat[2] == (1 << WARPEDMODEL_PREC_BITS) &&
+        !gm->wmmat[3]) {
         return ((!gm->wmmat[1] && !gm->wmmat[0]) ? IDENTITY : TRANSLATION);
     }
     if (gm->wmmat[2] == gm->wmmat[5] && gm->wmmat[3] == -gm->wmmat[4])
@@ -97,8 +95,7 @@ static int32_t add_param_offset(int param_index, int32_t param_value, int32_t of
 
     // Make parameter zero-centered and offset the shift that was done to make
     // it compatible with the warped model
-    param_value = (param_value - (is_one_centered << WARPEDMODEL_PREC_BITS)) >>
-        scale_vals[param_type];
+    param_value = (param_value - (is_one_centered << WARPEDMODEL_PREC_BITS)) >> scale_vals[param_type];
     // Add desired offset to the rescaled/zero-centered parameter
     param_value += offset;
     // Clamp the parameter so it does not overflow the number of bits allotted
@@ -132,11 +129,10 @@ static void force_wmtype(EbWarpedMotionParams *wm, TransformationType wmtype) {
     wm->wmtype = wmtype;
 }
 
-int64_t svt_av1_refine_integerized_param(EbWarpedMotionParams *wm, TransformationType wmtype,
-                                         int use_hbd, int bd, uint8_t *ref, uint8_t *ref_2b,
-                                         int r_width, int r_height, int r_stride, uint8_t *dst,
-                                         int d_width, int d_height, int d_stride, int n_refinements,
-                                         int64_t best_frame_error) {
+int64_t svt_av1_refine_integerized_param(EbWarpedMotionParams *wm, TransformationType wmtype, int use_hbd, int bd,
+                                         uint8_t *ref, uint8_t *ref_2b, int r_width, int r_height, int r_stride,
+                                         uint8_t *dst, int d_width, int d_height, int d_stride, int n_refinements,
+                                         uint8_t chess_refn, int64_t best_frame_error) {
     static const int max_trans_model_params[TRANS_TYPES] = {0, 2, 4, 6};
     const int        border                              = ERRORADV_BORDER;
     int              i                                   = 0, p;
@@ -165,9 +161,12 @@ int64_t svt_av1_refine_integerized_param(EbWarpedMotionParams *wm, Transformatio
                                     d_stride,
                                     0,
                                     0,
+
+                                    chess_refn,
+
                                     best_frame_error);
     best_error = AOMMIN(best_error, best_frame_error);
-    step       = 1 << (n_refinements - 1);
+    step       = 1 << (5 - 1); //initial step=16
     for (i = 0; i < n_refinements; i++, step >>= 1) {
         for (p = 0; p < n_params; ++p) {
             int step_dir = 0;
@@ -193,6 +192,9 @@ int64_t svt_av1_refine_integerized_param(EbWarpedMotionParams *wm, Transformatio
                                             d_stride,
                                             0,
                                             0,
+
+                                            chess_refn,
+
                                             best_error);
             if (step_error < best_error) {
                 best_error = step_error;
@@ -218,6 +220,9 @@ int64_t svt_av1_refine_integerized_param(EbWarpedMotionParams *wm, Transformatio
                                             d_stride,
                                             0,
                                             0,
+
+                                            chess_refn,
+
                                             best_error);
             if (step_error < best_error) {
                 best_error = step_error;
@@ -246,6 +251,9 @@ int64_t svt_av1_refine_integerized_param(EbWarpedMotionParams *wm, Transformatio
                                                 d_stride,
                                                 0,
                                                 0,
+
+                                                chess_refn,
+
                                                 best_error);
                 if (step_error < best_error) {
                     best_error = step_error;
@@ -275,12 +283,11 @@ static void get_inliers_from_indices(MotionModel *params, int *correspondences) 
     svt_aom_free(inliers_tmp);
 }
 
-static int compute_global_motion_feature_based(TransformationType type, unsigned char *frm_buffer,
-                                               int frm_width, int frm_height, int frm_stride,
-                                               int *frm_corners, int num_frm_corners, uint8_t *ref,
-                                               int ref_stride, int bit_depth,
-                                               int         *num_inliers_by_motion,
-                                               MotionModel *params_by_motion, int num_motions) {
+static int compute_global_motion_feature_based(TransformationType type, uint8_t corners, unsigned char *frm_buffer,
+                                               int frm_width, int frm_height, int frm_stride, int *frm_corners,
+                                               int num_frm_corners, uint8_t *ref, int ref_stride, int bit_depth,
+                                               int *num_inliers_by_motion, MotionModel *params_by_motion,
+                                               int num_motions, uint8_t match_sz) {
     (void)bit_depth;
     assert(bit_depth == EB_EIGHT_BIT);
     int            i;
@@ -294,6 +301,8 @@ static int compute_global_motion_feature_based(TransformationType type, unsigned
     num_ref_corners = svt_av1_fast_corner_detect(
         ref_buffer, frm_width, frm_height, ref_stride, ref_corners, MAX_CORNERS);
 
+    num_ref_corners = num_ref_corners * corners / 4;
+
     // find correspondences between the two images
     correspondences     = (int *)malloc(num_frm_corners * 4 * sizeof(*correspondences));
     num_correspondences = svt_av1_determine_correspondence(frm_buffer,
@@ -306,15 +315,13 @@ static int compute_global_motion_feature_based(TransformationType type, unsigned
                                                            frm_height,
                                                            frm_stride,
                                                            ref_stride,
-                                                           correspondences);
-
-    ransac(
-        correspondences, num_correspondences, num_inliers_by_motion, params_by_motion, num_motions);
+                                                           correspondences,
+                                                           match_sz);
+    ransac(correspondences, num_correspondences, num_inliers_by_motion, params_by_motion, num_motions);
 
     // Set num_inliers = 0 for motions with too few inliers so they are ignored.
     for (i = 0; i < num_motions; ++i) {
-        if (num_inliers_by_motion[i] < MIN_INLIER_PROB * num_correspondences ||
-            num_correspondences == 0) {
+        if (num_inliers_by_motion[i] < MIN_INLIER_PROB * num_correspondences || num_correspondences == 0) {
             num_inliers_by_motion[i] = 0;
         } else {
             get_inliers_from_indices(&params_by_motion[i], correspondences);
@@ -331,15 +338,15 @@ static int compute_global_motion_feature_based(TransformationType type, unsigned
     return 0;
 }
 
-int svt_av1_compute_global_motion(TransformationType type, unsigned char *frm_buffer, int frm_width,
-                                  int frm_height, int frm_stride, int *frm_corners,
-                                  int num_frm_corners, uint8_t *ref, int ref_stride, int bit_depth,
-                                  GlobalMotionEstimationType gm_estimation_type,
-                                  int *num_inliers_by_motion, MotionModel *params_by_motion,
-                                  int num_motions) {
+int svt_av1_compute_global_motion(TransformationType type, uint8_t corners, unsigned char *frm_buffer, int frm_width,
+                                  int frm_height, int frm_stride, int *frm_corners, int num_frm_corners, uint8_t *ref,
+                                  int ref_stride, int bit_depth, GlobalMotionEstimationType gm_estimation_type,
+                                  int *num_inliers_by_motion, MotionModel *params_by_motion, int num_motions,
+                                  uint8_t match_sz) {
     switch (gm_estimation_type) {
     case GLOBAL_MOTION_FEATURE_BASED:
         return compute_global_motion_feature_based(type,
+                                                   corners,
                                                    frm_buffer,
                                                    frm_width,
                                                    frm_height,
@@ -351,7 +358,8 @@ int svt_av1_compute_global_motion(TransformationType type, unsigned char *frm_bu
                                                    bit_depth,
                                                    num_inliers_by_motion,
                                                    params_by_motion,
-                                                   num_motions);
+                                                   num_motions,
+                                                   match_sz);
     default: assert(0 && "Unknown global motion estimation type");
     }
     return 0;

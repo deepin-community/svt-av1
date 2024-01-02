@@ -19,21 +19,20 @@
 /************************************************
  * PA Reference Queue Entry
  ************************************************/
-typedef struct PaReferenceQueueEntry {
+typedef struct PaReferenceEntry {
     EbDctor          dctor;
     EbObjectWrapper *input_object_ptr;
-    EbObjectWrapper *eb_y8b_wrapper_ptr;
+    EbObjectWrapper *y8b_wrapper;
     uint64_t         picture_number;
-    uint32_t         dependent_count;
-    ReferenceList   *list0_ptr;
-    ReferenceList   *list1_ptr;
-    uint32_t         dep_list0_count;
-    uint32_t         dep_list1_count;
-    DependentList    list0;
-    DependentList    list1;
-    uint8_t          is_alt_ref;
-} PaReferenceQueueEntry;
+    /* clang-format off */
+    bool is_valid; // The entry will be valid when it represents a valid DPB entry.
+                   // This is used in case the DPB is accessed before being populated,
+                   // and for when the DPB is cleared at EOS.
+    /* clang-format on */
+    uint64_t decode_order;
+    uint8_t  is_alt_ref;
+} PaReferenceEntry;
 
-extern EbErrorType pa_reference_queue_entry_ctor(PaReferenceQueueEntry *entry_ptr);
+extern EbErrorType svt_aom_pa_reference_queue_entry_ctor(PaReferenceEntry *entry_ptr);
 
 #endif // EbPictureDecisionQueue_h

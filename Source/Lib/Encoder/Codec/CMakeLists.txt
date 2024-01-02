@@ -169,8 +169,6 @@ set(all_files
         EbSourceBasedOperationsProcess.h
         EbTemporalFiltering.c
         EbTemporalFiltering.h
-        EbTransQuantBuffers.c
-        EbTransQuantBuffers.h
         EbTransformUnit.h
         EbTransforms.c
         EbTransforms.h
@@ -214,6 +212,8 @@ set(all_files
         ransac.h
         vector.c
         vector.h
+        EncModeConfig.c
+        EncModeConfig.h
         )
 
 add_library(ENCODER_CODEC OBJECT ${all_files})

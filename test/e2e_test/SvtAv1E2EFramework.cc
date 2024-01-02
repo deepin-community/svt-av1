@@ -55,15 +55,13 @@ VideoSource *SvtAv1E2ETestFramework::prepare_video_src(
                                        std::get<2>(vector),
                                        std::get<3>(vector),
                                        std::get<4>(vector),
-                                       (uint8_t)std::get<5>(vector),
-                                       std::get<6>(vector));
+                                       (uint8_t)std::get<5>(vector));
         break;
     case DUMMY_SOURCE:
         video_src = new DummyVideoSource(std::get<2>(vector),
                                          std::get<3>(vector),
                                          std::get<4>(vector),
-                                         (uint8_t)std::get<5>(vector),
-                                         std::get<6>(vector));
+                                         (uint8_t)std::get<5>(vector));
         break;
     default: assert(0); break;
     }
@@ -90,7 +88,6 @@ void SvtAv1E2ETestFramework::setup_src_param(const VideoSource *source,
     config.source_width = source->get_width_with_padding();
     config.source_height = source->get_height_with_padding();
     config.encoder_bit_depth = source->get_bit_depth();
-    config.compressed_ten_bit_format = source->get_compressed_10bit_mode();
 }
 
 SvtAv1E2ETestFramework::SvtAv1E2ETestFramework() : enc_setting(GetParam()) {
@@ -521,6 +518,16 @@ void SvtAv1E2ETestFramework::run_encode_process() {
 
                 // process the output buffer
                 if (return_error != EB_NoErrorEmptyQueue && enc_out) {
+#if OPT_LD_LATENCY2
+                    if (enc_out->flags & EB_BUFFERFLAG_EOS) {
+                        enc_file_eos = true;
+                        printf("Encoder EOS\n");
+                    } else {
+                        // send to reference decoder
+                        TimeAutoCount counter(CONFORMANCE, collect_);
+                        process_compress_data(enc_out);
+                    }
+#else
                     // send to reference decoder
                     TimeAutoCount counter(CONFORMANCE, collect_);
                     process_compress_data(enc_out);
@@ -528,6 +535,7 @@ void SvtAv1E2ETestFramework::run_encode_process() {
                         enc_file_eos = true;
                         printf("Encoder EOS\n");
                     }
+#endif
                     // check if the process has encounter error, break out if
                     // true, like the recon frame does not match with decoded
                     // frame.

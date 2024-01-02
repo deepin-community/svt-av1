@@ -768,11 +768,12 @@ much greater detail than this document.
 - [Temporal Dependency Model](Appendix-TPL.md)
 - [Transform Search Appendix](Appendix-TX-Search.md)
 - [Reference Scaling Appendix](Appendix-Reference-Scaling.md)
+- [Dynamic Mini-GoP](Appendix-Dynamic-Mini-GoP.md)
 
 
 ## Notes
 
-The information in this document was compiled at <mark>v1.3.0</mark> may not
+The information in this document was compiled at <mark>v1.5.0</mark> may not
 reflect the latest status of the encoder design. For the most up-to-date
 settings and implementation, it's recommended to visit the section of the code
 implementing the feature / section in question.

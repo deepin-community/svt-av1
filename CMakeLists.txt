@@ -16,7 +16,7 @@ if("${CMAKE_CURRENT_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_BINARY_DIR}")
                     "Please use the Build folder or create your own.")
 endif()
 
-project(svt-av1 VERSION 1.3.0
+project(svt-av1 VERSION 1.7.0
     LANGUAGES C CXX)
 
 if(POLICY CMP0063)
@@ -203,10 +203,12 @@ endif()
 if(UNIX)
     if(APPLE)
         set(CMAKE_MACOSX_RPATH 1)
-        set(CMAKE_C_ARCHIVE_CREATE   "<CMAKE_AR> Scr <TARGET> <LINK_FLAGS> <OBJECTS>")
-        set(CMAKE_CXX_ARCHIVE_CREATE "<CMAKE_AR> Scr <TARGET> <LINK_FLAGS> <OBJECTS>")
-        set(CMAKE_C_ARCHIVE_FINISH   "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
-        set(CMAKE_CXX_ARCHIVE_FINISH "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
+        if(CMAKE_C_COMPILER_ID MATCHES "AppleClang")
+            set(CMAKE_C_ARCHIVE_CREATE   "<CMAKE_AR> Scr <TARGET> <LINK_FLAGS> <OBJECTS>")
+            set(CMAKE_CXX_ARCHIVE_CREATE "<CMAKE_AR> Scr <TARGET> <LINK_FLAGS> <OBJECTS>")
+            set(CMAKE_C_ARCHIVE_FINISH   "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
+            set(CMAKE_CXX_ARCHIVE_FINISH "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
+        endif()
     else()
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecstack -z relro -z now")
     endif()
@@ -287,7 +289,7 @@ endmacro()
 
 option(SVT_AV1_LTO "Attempt to enable Link Time Optimization if available" OFF)
 if(SVT_AV1_LTO)
-    if(CMAKE_VERSION GREATER_EQUAL 3.9)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.9)
         include(CheckIPOSupported)
         check_ipo_supported(RESULT svt_av1_ipo_supported)
         if(svt_av1_ipo_supported AND NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION)
@@ -423,6 +425,44 @@ if(NOT HAVE_STRCPY_S OR NOT HAVE_STRNCPY_S OR NOT HAVE_STRNLEN_S)
         $<$<NOT:$<BOOL:${HAVE_STRCPY_S}>>:third_party/safestringlib/strcpy_s.c>)
 endif()
 
+# Try to find valgrind.h for the RUNNING_ON_VALGRIND macro
+# needed for now for svt_dav1d_inv_txfm_add_dct_dct_32x16_8bpc_avx2
+# due to the later crashing libVEX when running on valgrind
+# TODO: remove this once the issue is fixed
+include(CheckIncludeFile)
+check_include_file("valgrind/valgrind.h" HAVE_VALGRIND_H)
+if(HAVE_VALGRIND_H)
+    set_property(DIRECTORY .
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS
+            HAVE_VALGRIND_H=1)
+else()
+    set_property(DIRECTORY .
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS
+            HAVE_VALGRIND_H=0)
+endif()
+
+# try to see if __builtin_expect is available
+check_c_source_compiles("
+    int main() {
+        if (__builtin_expect(1, 0)) {
+            return 1;
+        }
+        return 0;
+    }" HAVE_BUILTIN_EXPECT)
+if(HAVE_BUILTIN_EXPECT)
+    set_property(DIRECTORY .
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS
+            HAVE_BUILTIN_EXPECT=1)
+else()
+    set_property(DIRECTORY .
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS
+            HAVE_BUILTIN_EXPECT=0)
+endif()
+
 include_directories(.)
 
 # Find out if we have threading available
@@ -453,6 +493,16 @@ endif()
 
 if(COVERAGE)
     add_clike_and_ld_flags(--coverage)
+endif()
+
+set(SVT_AV1_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
+set(SVT_AV1_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+
+if(NOT IS_ABSOLUTE "${SVT_AV1_INCLUDEDIR}")
+    string(PREPEND SVT_AV1_INCLUDEDIR "\${prefix}/")
+endif()
+if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+    string(PREPEND SVT_AV1_LIBDIR "\${exec_prefix}/")
 endif()
 
 # Add Subdirectories

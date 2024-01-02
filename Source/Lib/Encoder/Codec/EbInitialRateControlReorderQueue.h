@@ -22,10 +22,10 @@
 typedef struct InitialRateControlReorderEntry {
     EbDctor          dctor;
     uint64_t         picture_number;
-    EbObjectWrapper *parent_pcs_wrapper_ptr;
+    EbObjectWrapper *ppcs_wrapper;
 } InitialRateControlReorderEntry;
 
-extern EbErrorType initial_rate_control_reorder_entry_ctor(
-    InitialRateControlReorderEntry *entry_ptr, uint32_t picture_number);
+extern EbErrorType svt_aom_initial_rate_control_reorder_entry_ctor(InitialRateControlReorderEntry *entry_ptr,
+                                                                   uint32_t                        picture_number);
 
 #endif //EbInitialRateControlReorderQueue_h

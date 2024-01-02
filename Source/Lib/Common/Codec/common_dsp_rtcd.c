@@ -11,6 +11,13 @@
 * PATENTS file, you can obtain it at https://www.aomedia.org/license/patent-license.
 */
 
+#if HAVE_VALGRIND_H
+#include <valgrind/valgrind.h>
+#else
+// assume the system doesn't have access to valgrind if the header is missing
+#define RUNNING_ON_VALGRIND 0
+#endif
+
 #define RTCD_C
 #include "common_dsp_rtcd.h"
 #include "EbPictureOperators.h"
@@ -18,7 +25,7 @@
 #include "EbAvcStyleMcp.h"
 
 #ifdef ARCH_X86_64
-// for get_cpu_flags
+// for svt_aom_get_cpu_flags
 #include "cpuinfo.h"
 #endif
 
@@ -72,7 +79,7 @@ int64_t svt_av1_block_error_c(const TranLow *coeff, const TranLow *dqcoeff,
  * Instruction Set Support
  **************************************/
 #ifdef ARCH_X86_64
-EbCpuFlags get_cpu_flags() {
+EbCpuFlags svt_aom_get_cpu_flags() {
     EbCpuFlags flags = 0;
 
     // safe to call multiple times, and threadsafe
@@ -99,8 +106,8 @@ EbCpuFlags get_cpu_flags() {
     return flags;
 }
 
-EbCpuFlags get_cpu_flags_to_use() {
-    EbCpuFlags flags = get_cpu_flags();
+EbCpuFlags svt_aom_get_cpu_flags_to_use() {
+    EbCpuFlags flags = svt_aom_get_cpu_flags();
 #if !EN_AVX512_SUPPORT
     /* Remove AVX512 flags. */
     flags &= (EB_CPU_FLAGS_AVX512F - 1);
@@ -168,7 +175,6 @@ EbCpuFlags get_cpu_flags_to_use() {
 #define SET_SSE2_AVX2(ptr, c, sse2, avx2)                   SET_FUNCTIONS(ptr, c, 0, 0, sse2, 0, 0, 0, 0, 0, avx2, 0)
 #define SET_SSE2_AVX512(ptr, c, sse2, avx512)               SET_FUNCTIONS(ptr, c, 0, 0, sse2, 0, 0, 0, 0, 0, 0, avx512)
 #define SET_SSSE3(ptr, c, ssse3)                            SET_FUNCTIONS(ptr, c, 0, 0, 0, 0, ssse3, 0, 0, 0, 0, 0)
-#define SET_SSSE3_AVX2(ptr, c, ssse3, avx2)                 SET_FUNCTIONS(ptr, c, 0, 0, 0, 0, ssse3, 0, 0, 0, avx2, 0)
 #define SET_SSE41(ptr, c, sse4_1)                           SET_FUNCTIONS(ptr, c, 0, 0, 0, 0, 0, sse4_1, 0, 0, 0, 0)
 #define SET_SSE41_AVX2(ptr, c, sse4_1, avx2)                SET_FUNCTIONS(ptr, c, 0, 0, 0, 0, 0, sse4_1, 0, 0, avx2, 0)
 #define SET_SSE41_AVX2_AVX512(ptr, c, sse4_1, avx2, avx512) SET_FUNCTIONS(ptr, c, 0, 0, 0, 0, 0, sse4_1, 0, 0, avx2, avx512)
@@ -179,7 +185,7 @@ EbCpuFlags get_cpu_flags_to_use() {
 #define SET_SSSE3_AVX2(ptr, c,ssse3, avx2)                  SET_FUNCTIONS(ptr, c, 0, 0, 0, 0, ssse3, 0, 0, 0, avx2, 0)
 
 
-void setup_common_rtcd_internal(EbCpuFlags flags) {
+void svt_aom_setup_common_rtcd_internal(EbCpuFlags flags) {
     /* Avoid check that pointer is set double, after first  setup. */
     static Bool first_call_setup      = TRUE;
     Bool        check_pointer_was_set = first_call_setup;
@@ -187,7 +193,7 @@ void setup_common_rtcd_internal(EbCpuFlags flags) {
 #ifdef ARCH_X86_64
     /** Should be done during library initialization,
         but for safe limiting cpu flags again. */
-    flags &= get_cpu_flags_to_use();
+    flags &= svt_aom_get_cpu_flags_to_use();
     //to use C: flags=0
 #else
     (void)flags;
@@ -232,7 +238,13 @@ void setup_common_rtcd_internal(EbCpuFlags flags) {
     SET_SSE41_AVX2_AVX512(svt_av1_inv_txfm2d_add_64x16, svt_av1_inv_txfm2d_add_64x16_c, svt_av1_highbd_inv_txfm_add_sse4_1, svt_dav1d_highbd_inv_txfm_add_avx2, svt_av1_inv_txfm2d_add_64x16_avx512);
     SET_SSE41_AVX2_AVX512(svt_av1_inv_txfm2d_add_64x32, svt_av1_inv_txfm2d_add_64x32_c, svt_av1_highbd_inv_txfm_add_sse4_1, svt_dav1d_highbd_inv_txfm_add_avx2, svt_av1_inv_txfm2d_add_64x32_avx512);
     SET_SSE41_AVX2_AVX512(svt_av1_inv_txfm2d_add_64x64, svt_av1_inv_txfm2d_add_64x64_c, svt_av1_inv_txfm2d_add_64x64_sse4_1, svt_dav1d_inv_txfm2d_add_64x64_avx2, svt_av1_inv_txfm2d_add_64x64_avx512);
-    SET_SSSE3_AVX2(svt_av1_inv_txfm_add, svt_av1_inv_txfm_add_c, svt_av1_inv_txfm_add_ssse3, svt_dav1d_inv_txfm_add_avx2);
+
+    // workaround for dav1d functions crashing valgrind's libVEX JIT compiler
+    if (EB_UNLIKELY(RUNNING_ON_VALGRIND))
+        SET_SSSE3_AVX2(svt_av1_inv_txfm_add, svt_av1_inv_txfm_add_c, svt_av1_inv_txfm_add_ssse3, svt_av1_inv_txfm_add_avx2);
+    else
+        SET_SSSE3_AVX2(svt_av1_inv_txfm_add, svt_av1_inv_txfm_add_c, svt_av1_inv_txfm_add_ssse3, svt_dav1d_inv_txfm_add_avx2);
+
     SET_SSE41_AVX2(svt_compressed_packmsb, svt_compressed_packmsb_c, svt_compressed_packmsb_sse4_1_intrin, svt_compressed_packmsb_avx2_intrin);
     SET_AVX2(svt_c_pack, svt_c_pack_c, svt_c_pack_avx2_intrin);
     SET_SSE2_AVX2(svt_unpack_avg, svt_unpack_avg_c, svt_unpack_avg_sse2_intrin, svt_unpack_avg_avx2_intrin);
@@ -243,7 +255,7 @@ void setup_common_rtcd_internal(EbCpuFlags flags) {
     SET_AVX2(svt_convert_8bit_to_16bit, svt_convert_8bit_to_16bit_c, svt_convert_8bit_to_16bit_avx2);
     SET_AVX2(svt_convert_16bit_to_8bit, svt_convert_16bit_to_8bit_c, svt_convert_16bit_to_8bit_avx2);
     SET_SSE2_AVX2(svt_pack2d_16_bit_src_mul4, svt_enc_msb_pack2_d, svt_enc_msb_pack2d_sse2_intrin, svt_enc_msb_pack2d_avx2_intrin_al);
-    SET_SSE2_AVX2(svt_un_pack2d_16_bit_src_mul4, svt_enc_msb_un_pack2_d, svt_enc_msb_un_pack2d_sse2_intrin, svt_enc_msb_un_pack2d_avx2_intrin);
+    SET_SSE2_AVX2(svt_aom_un_pack2d_16_bit_src_mul4, svt_enc_msb_un_pack2_d, svt_enc_msb_un_pack2d_sse2_intrin, svt_enc_msb_un_pack2d_avx2_intrin);
     SET_SSE41_AVX2(svt_full_distortion_kernel_cbf_zero32_bits, svt_full_distortion_kernel_cbf_zero32_bits_c, svt_full_distortion_kernel_cbf_zero32_bits_sse4_1, svt_full_distortion_kernel_cbf_zero32_bits_avx2);
     SET_SSE41_AVX2(svt_full_distortion_kernel32_bits, svt_full_distortion_kernel32_bits_c, svt_full_distortion_kernel32_bits_sse4_1, svt_full_distortion_kernel32_bits_avx2);
     SET_SSE41_AVX2_AVX512(svt_spatial_full_distortion_kernel, svt_spatial_full_distortion_kernel_c, svt_spatial_full_distortion_kernel_sse4_1, svt_spatial_full_distortion_kernel_avx2, svt_spatial_full_distortion_kernel_avx512);
@@ -341,7 +353,7 @@ void setup_common_rtcd_internal(EbCpuFlags flags) {
     SET_AVX2(svt_aom_highbd_paeth_predictor_64x16, svt_aom_highbd_paeth_predictor_64x16_c, svt_aom_highbd_paeth_predictor_64x16_avx2);
     SET_AVX2(svt_aom_highbd_paeth_predictor_64x32, svt_aom_highbd_paeth_predictor_64x32_c, svt_aom_highbd_paeth_predictor_64x32_avx2);
     SET_AVX2(svt_aom_highbd_paeth_predictor_64x64, svt_aom_highbd_paeth_predictor_64x64_c, svt_aom_highbd_paeth_predictor_64x64_avx2);
-    SET_SSE2(aom_sum_squares_i16, svt_aom_sum_squares_i16_c, svt_aom_sum_squares_i16_sse2);
+    SET_SSE2(svt_aom_sum_squares_i16, svt_aom_sum_squares_i16_c, svt_aom_sum_squares_i16_sse2);
     SET_SSE2(svt_aom_dc_predictor_4x4, svt_aom_dc_predictor_4x4_c, svt_aom_dc_predictor_4x4_sse2);
     SET_SSE2(svt_aom_dc_predictor_4x8, svt_aom_dc_predictor_4x8_c, svt_aom_dc_predictor_4x8_sse2);
     SET_SSE2(svt_aom_dc_predictor_4x16, svt_aom_dc_predictor_4x16_c, svt_aom_dc_predictor_4x16_sse2);
@@ -533,7 +545,7 @@ void setup_common_rtcd_internal(EbCpuFlags flags) {
 #endif
     SET_SSE41_AVX2(svt_aom_copy_rect8_8bit_to_16bit, svt_aom_copy_rect8_8bit_to_16bit_c, svt_aom_copy_rect8_8bit_to_16bit_sse4_1, svt_aom_copy_rect8_8bit_to_16bit_avx2);
     SET_SSE41_AVX2(svt_av1_highbd_warp_affine, svt_av1_highbd_warp_affine_c, svt_av1_highbd_warp_affine_sse4_1, svt_av1_highbd_warp_affine_avx2);
-    SET_AVX2(dec_svt_av1_highbd_warp_affine, dec_svt_av1_highbd_warp_affine_c, dec_svt_av1_highbd_warp_affine_avx2);
+    SET_AVX2(dec_svt_av1_highbd_warp_affine, svt_aom_dec_svt_av1_highbd_warp_affine_c, svt_aom_dec_svt_av1_highbd_warp_affine_avx2);
     SET_SSE41_AVX2(svt_av1_warp_affine, svt_av1_warp_affine_c, svt_av1_warp_affine_sse4_1, svt_av1_warp_affine_avx2);
 
     SET_SSE2(svt_aom_highbd_lpf_horizontal_4, svt_aom_highbd_lpf_horizontal_4_c, svt_aom_highbd_lpf_horizontal_4_sse2);
@@ -719,7 +731,7 @@ void setup_common_rtcd_internal(EbCpuFlags flags) {
     SET_AVX2_AVX512(svt_aom_highbd_h_predictor_64x16, svt_aom_highbd_h_predictor_64x16_c, svt_aom_highbd_h_predictor_64x16_avx2, aom_highbd_h_predictor_64x16_avx512);
     SET_AVX2_AVX512(svt_aom_highbd_h_predictor_64x32, svt_aom_highbd_h_predictor_64x32_c, svt_aom_highbd_h_predictor_64x32_avx2, aom_highbd_h_predictor_64x32_avx512);
     SET_AVX2_AVX512(svt_aom_highbd_h_predictor_64x64, svt_aom_highbd_h_predictor_64x64_c, svt_aom_highbd_h_predictor_64x64_avx2, aom_highbd_h_predictor_64x64_avx512);
-    SET_SSE2(svt_log2f, log2f_32, Log2f_ASM);
+    SET_SSE2(svt_log2f, svt_aom_log2f_32, Log2f_ASM);
     SET_SSE2(svt_memcpy, svt_memcpy_c, svt_memcpy_intrin_sse);
     SET_AVX2(svt_aom_hadamard_32x32, svt_aom_hadamard_32x32_c, svt_aom_hadamard_32x32_avx2);
     SET_AVX2(svt_aom_hadamard_16x16, svt_aom_hadamard_16x16_c, svt_aom_hadamard_16x16_avx2);

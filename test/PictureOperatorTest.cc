@@ -94,8 +94,8 @@ class PictureOperatorTest : public ::testing::Test,
         : pu_width_(std::get<0>(TEST_GET_PARAM(0))),
           pu_height_(std::get<1>(TEST_GET_PARAM(0))),
           test_pattern_(TEST_GET_PARAM(1)) {
-        tst_size = 2 * MAX_PU_SIZE * MAX_PU_SIZE;
-        tst_stride_ = 2 * MAX_PU_SIZE;
+        tst_size = 2 * 64 * 64;
+        tst_stride_ = 2 * 64;
         tst1_aligned_ = (uint8_t *)svt_aom_memalign(8, tst_size);
         tst2_aligned_ = (uint8_t *)svt_aom_memalign(8, tst_size);
         dst1_aligned_ = (uint8_t *)svt_aom_memalign(8, tst_size);
@@ -256,13 +256,13 @@ class Downsample2DTest
 
     void run_test() {
         prepare_data();
-        downsample_2d_c(src_ptr,
-                        stride,
-                        pu_width,
-                        pu_height,
-                        dst_ref_ptr,
-                        decim_stride,
-                        decim_step);
+        svt_aom_downsample_2d_c(src_ptr,
+                                stride,
+                                pu_width,
+                                pu_height,
+                                dst_ref_ptr,
+                                decim_stride,
+                                decim_step);
 
         fn_ptr(src_ptr,
                stride,
@@ -295,6 +295,6 @@ INSTANTIATE_TEST_CASE_P(
     Downsample2D, Downsample2DTest,
     ::testing::Combine(::testing::ValuesIn(DOWNSAMPLE_SIZES),
                        ::testing::ValuesIn(DECIM_STEPS),
-                       ::testing::Values(downsample_2d_sse4_1,
-                                         downsample_2d_avx2)));
+                       ::testing::Values(svt_aom_downsample_2d_sse4_1,
+                                         svt_aom_downsample_2d_avx2)));
 }  // namespace

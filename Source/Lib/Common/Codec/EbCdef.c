@@ -33,9 +33,7 @@ static int32_t check_size_argument_overflow(uint64_t nmemb, uint64_t size) {
     return 1;
 }
 
-static size_t get_aligned_malloc_size(size_t size, size_t align) {
-    return size + align - 1 + ADDRESS_STORAGE_SIZE;
-}
+static size_t get_aligned_malloc_size(size_t size, size_t align) { return size + align - 1 + ADDRESS_STORAGE_SIZE; }
 
 static size_t *get_malloc_address_location(void *const mem) { return ((size_t *)mem) - 1; }
 
@@ -99,12 +97,12 @@ first index is offset +/-2. This removes the need to constrain the first
 index to the same range using e.g., & 7.
 */
 DECLARE_ALIGNED(16, const int, eb_cdef_directions_padded[12][2]) = {
-    /* Padding: eb_cdef_directions[6] */
+    /* Padding: svt_aom_eb_cdef_directions[6] */
     {1 * CDEF_BSTRIDE + 0, 2 * CDEF_BSTRIDE + 0},
-    /* Padding: eb_cdef_directions[7] */
+    /* Padding: svt_aom_eb_cdef_directions[7] */
     {1 * CDEF_BSTRIDE + 0, 2 * CDEF_BSTRIDE - 1},
 
-    /* Begin eb_cdef_directions */
+    /* Begin svt_aom_eb_cdef_directions */
     {-1 * CDEF_BSTRIDE + 1, -2 * CDEF_BSTRIDE + 2},
     {0 * CDEF_BSTRIDE + 1, -1 * CDEF_BSTRIDE + 2},
     {0 * CDEF_BSTRIDE + 1, 0 * CDEF_BSTRIDE + 2},
@@ -113,15 +111,15 @@ DECLARE_ALIGNED(16, const int, eb_cdef_directions_padded[12][2]) = {
     {1 * CDEF_BSTRIDE + 0, 2 * CDEF_BSTRIDE + 1},
     {1 * CDEF_BSTRIDE + 0, 2 * CDEF_BSTRIDE + 0},
     {1 * CDEF_BSTRIDE + 0, 2 * CDEF_BSTRIDE - 1},
-    /* End eb_cdef_directions */
+    /* End svt_aom_eb_cdef_directions */
 
-    /* Padding: eb_cdef_directions[0] */
+    /* Padding: svt_aom_eb_cdef_directions[0] */
     {-1 * CDEF_BSTRIDE + 1, -2 * CDEF_BSTRIDE + 2},
-    /* Padding: eb_cdef_directions[1] */
+    /* Padding: svt_aom_eb_cdef_directions[1] */
     {0 * CDEF_BSTRIDE + 1, -1 * CDEF_BSTRIDE + 2},
 };
 
-const int (*const eb_cdef_directions)[2] = eb_cdef_directions_padded + 2;
+const int (*const svt_aom_eb_cdef_directions)[2] = eb_cdef_directions_padded + 2;
 
 /* Compute the primary filter strength for an 8x8 block based on the
 directional variance difference. A high variance difference means
@@ -135,8 +133,8 @@ static INLINE int32_t adjust_strength(int32_t strength, int32_t var) {
     return var ? (strength * (4 + i) + 8) >> 4 : 0;
 }
 
-void svt_aom_copy_rect8_8bit_to_16bit_c(uint16_t *dst, int32_t dstride, const uint8_t *src,
-                                        int32_t sstride, int32_t v, int32_t h) {
+void svt_aom_copy_rect8_8bit_to_16bit_c(uint16_t *dst, int32_t dstride, const uint8_t *src, int32_t sstride, int32_t v,
+                                        int32_t h) {
     for (int32_t i = 0; i < v; i++) {
         for (int32_t j = 0; j < h; j++) dst[i * dstride + j] = src[i * sstride + j];
     }
@@ -149,8 +147,7 @@ particular direction, i.e. the squared error between the input and a
 in a particular direction. Since each direction have the same sum(x^2) term,
 that term is never computed. See Section 2, step 2, of:
 http://jmvalin.ca/notes/intra_paint.pdf */
-uint8_t svt_aom_cdef_find_dir_c(const uint16_t *img, int32_t stride, int32_t *var,
-                                int32_t coeff_shift) {
+uint8_t svt_aom_cdef_find_dir_c(const uint16_t *img, int32_t stride, int32_t *var, int32_t coeff_shift) {
     int32_t cost[8]        = {0};
     int32_t partial[8][15] = {{0}};
     int32_t best_cost      = 0;
@@ -184,10 +181,8 @@ uint8_t svt_aom_cdef_find_dir_c(const uint16_t *img, int32_t stride, int32_t *va
     cost[2] *= div_table[8];
     cost[6] *= div_table[8];
     for (i = 0; i < 7; i++) {
-        cost[0] += (partial[0][i] * partial[0][i] + partial[0][14 - i] * partial[0][14 - i]) *
-            div_table[i + 1];
-        cost[4] += (partial[4][i] * partial[4][i] + partial[4][14 - i] * partial[4][14 - i]) *
-            div_table[i + 1];
+        cost[0] += (partial[0][i] * partial[0][i] + partial[0][14 - i] * partial[0][14 - i]) * div_table[i + 1];
+        cost[4] += (partial[4][i] * partial[4][i] + partial[4][14 - i] * partial[4][14 - i]) * div_table[i + 1];
     }
     cost[0] += partial[0][7] * partial[0][7] * div_table[8];
     cost[4] += partial[4][7] * partial[4][7] * div_table[8];
@@ -196,8 +191,7 @@ uint8_t svt_aom_cdef_find_dir_c(const uint16_t *img, int32_t stride, int32_t *va
         for (j = 0; j < 4 + 1; j++) cost[i] += partial[i][3 + j] * partial[i][3 + j];
         cost[i] *= div_table[8];
         for (j = 0; j < 4 - 1; j++) {
-            cost[i] += (partial[i][j] * partial[i][j] + partial[i][10 - j] * partial[i][10 - j]) *
-                div_table[2 * j + 2];
+            cost[i] += (partial[i][j] * partial[i][j] + partial[i][10 - j] * partial[i][10 - j]) * div_table[2 * j + 2];
         }
     }
     for (i = 0; i < 8; i++) {
@@ -215,16 +209,14 @@ uint8_t svt_aom_cdef_find_dir_c(const uint16_t *img, int32_t stride, int32_t *va
     return best_dir;
 }
 
-void svt_aom_cdef_find_dir_dual_c(const uint16_t *img1, const uint16_t *img2, int stride,
-                                  int32_t *var1, int32_t *var2, int32_t coeff_shift, uint8_t *out1,
-                                  uint8_t *out2) {
+void svt_aom_cdef_find_dir_dual_c(const uint16_t *img1, const uint16_t *img2, int stride, int32_t *var1, int32_t *var2,
+                                  int32_t coeff_shift, uint8_t *out1, uint8_t *out2) {
     *out1 = svt_aom_cdef_find_dir_c(img1, stride, var1, coeff_shift);
     *out2 = svt_aom_cdef_find_dir_c(img2, stride, var2, coeff_shift);
 }
 
-static AOM_INLINE void cdef_find_dir(uint16_t *in, CdefList *dlist,
-                                     int32_t var[CDEF_NBLOCKS][CDEF_NBLOCKS], int32_t cdef_count,
-                                     int32_t coeff_shift, uint8_t dir[CDEF_NBLOCKS][CDEF_NBLOCKS]) {
+static AOM_INLINE void cdef_find_dir(uint16_t *in, CdefList *dlist, int32_t var[CDEF_NBLOCKS][CDEF_NBLOCKS],
+                                     int32_t cdef_count, int32_t coeff_shift, uint8_t dir[CDEF_NBLOCKS][CDEF_NBLOCKS]) {
     int bi;
 
     // Find direction of two 8x8 blocks together.
@@ -254,21 +246,19 @@ static AOM_INLINE void cdef_find_dir(uint16_t *in, CdefList *dlist,
     }
 }
 
-const int32_t eb_cdef_pri_taps[2][2] = {{4, 2}, {3, 3}};
-const int32_t eb_cdef_sec_taps[2][2] = {{2, 1}, {2, 1}};
+const int32_t svt_aom_eb_cdef_pri_taps[2][2] = {{4, 2}, {3, 3}};
+const int32_t svt_aom_eb_cdef_sec_taps[2][2] = {{2, 1}, {2, 1}};
 
 /* Smooth in the direction detected. */
-void svt_cdef_filter_block_c(uint8_t *dst8, uint16_t *dst16, int32_t dstride, const uint16_t *in,
-                             int32_t pri_strength, int32_t sec_strength, int32_t dir,
-                             int32_t pri_damping, int32_t sec_damping, int32_t bsize,
+void svt_cdef_filter_block_c(uint8_t *dst8, uint16_t *dst16, int32_t dstride, const uint16_t *in, int32_t pri_strength,
+                             int32_t sec_strength, int32_t dir, int32_t pri_damping, int32_t sec_damping, int32_t bsize,
                              int32_t coeff_shift, uint8_t subsampling_factor) {
     int32_t        i, j, k;
     const int32_t  s        = CDEF_BSTRIDE;
-    const int32_t *pri_taps = eb_cdef_pri_taps[(pri_strength >> coeff_shift) & 1];
-    const int32_t *sec_taps = eb_cdef_sec_taps[(pri_strength >> coeff_shift) & 1];
+    const int32_t *pri_taps = svt_aom_eb_cdef_pri_taps[(pri_strength >> coeff_shift) & 1];
+    const int32_t *sec_taps = svt_aom_eb_cdef_sec_taps[(pri_strength >> coeff_shift) & 1];
 
-    for (i = 0; i < (4 << (int32_t)(bsize == BLOCK_8X8 || bsize == BLOCK_4X8));
-         i += subsampling_factor) {
+    for (i = 0; i < (4 << (int32_t)(bsize == BLOCK_8X8 || bsize == BLOCK_4X8)); i += subsampling_factor) {
         for (j = 0; j < (4 << (int32_t)(bsize == BLOCK_8X8 || bsize == BLOCK_8X4)); j++) {
             int16_t sum = 0;
             int16_t y;
@@ -276,8 +266,8 @@ void svt_cdef_filter_block_c(uint8_t *dst8, uint16_t *dst16, int32_t dstride, co
             int32_t max = x;
             int32_t min = x;
             for (k = 0; k < 2; k++) {
-                int16_t p0 = in[i * s + j + eb_cdef_directions[dir][k]];
-                int16_t p1 = in[i * s + j - eb_cdef_directions[dir][k]];
+                int16_t p0 = in[i * s + j + svt_aom_eb_cdef_directions[dir][k]];
+                int16_t p1 = in[i * s + j - svt_aom_eb_cdef_directions[dir][k]];
                 sum += (int16_t)(pri_taps[k] * constrain(p0 - x, pri_strength, pri_damping));
                 sum += (int16_t)(pri_taps[k] * constrain(p1 - x, pri_strength, pri_damping));
                 if (p0 != CDEF_VERY_LARGE)
@@ -286,10 +276,10 @@ void svt_cdef_filter_block_c(uint8_t *dst8, uint16_t *dst16, int32_t dstride, co
                     max = AOMMAX(p1, max);
                 min        = AOMMIN(p0, min);
                 min        = AOMMIN(p1, min);
-                int16_t s0 = in[i * s + j + eb_cdef_directions[(dir + 2)][k]];
-                int16_t s1 = in[i * s + j - eb_cdef_directions[(dir + 2)][k]];
-                int16_t s2 = in[i * s + j + eb_cdef_directions[(dir - 2)][k]];
-                int16_t s3 = in[i * s + j - eb_cdef_directions[(dir - 2)][k]];
+                int16_t s0 = in[i * s + j + svt_aom_eb_cdef_directions[(dir + 2)][k]];
+                int16_t s1 = in[i * s + j - svt_aom_eb_cdef_directions[(dir + 2)][k]];
+                int16_t s2 = in[i * s + j + svt_aom_eb_cdef_directions[(dir - 2)][k]];
+                int16_t s3 = in[i * s + j - svt_aom_eb_cdef_directions[(dir - 2)][k]];
                 if (s0 != CDEF_VERY_LARGE)
                     max = AOMMAX(s0, max);
                 if (s1 != CDEF_VERY_LARGE)
@@ -315,15 +305,14 @@ void svt_cdef_filter_block_c(uint8_t *dst8, uint16_t *dst16, int32_t dstride, co
         }
     }
 }
-void fill_rect(uint16_t *dst, int32_t dstride, int32_t v, int32_t h, uint16_t x) {
+void svt_aom_fill_rect(uint16_t *dst, int32_t dstride, int32_t v, int32_t h, uint16_t x) {
     for (int32_t i = 0; i < v; i++) {
         for (int32_t j = 0; j < h; j++) dst[i * dstride + j] = x;
     }
 }
 
-void copy_sb8_16(uint16_t *dst, int32_t dstride, const uint8_t *src, int32_t src_voffset,
-                 int32_t src_hoffset, int32_t sstride, int32_t vsize, int32_t hsize,
-                 Bool is_16bit) {
+void svt_aom_copy_sb8_16(uint16_t *dst, int32_t dstride, const uint8_t *src, int32_t src_voffset, int32_t src_hoffset,
+                         int32_t sstride, int32_t vsize, int32_t hsize, Bool is_16bit) {
     if (is_16bit) {
         const uint16_t *base = ((uint16_t *)src) + (src_voffset * sstride + src_hoffset);
         for (int r = 0; r < vsize; r++) {
@@ -337,8 +326,7 @@ void copy_sb8_16(uint16_t *dst, int32_t dstride, const uint8_t *src, int32_t src
     }
 }
 
-void copy_rect(uint16_t *dst, int32_t dstride, const uint16_t *src, int32_t sstride, int32_t v,
-               int32_t h) {
+void svt_aom_copy_rect(uint16_t *dst, int32_t dstride, const uint16_t *src, int32_t sstride, int32_t v, int32_t h) {
     for (int32_t i = 0; i < v; i++) {
         svt_memcpy(dst, src, sizeof(dst[0]) * h);
         dst += dstride;
@@ -348,12 +336,11 @@ void copy_rect(uint16_t *dst, int32_t dstride, const uint16_t *src, int32_t sstr
 /*
  * Loop over the non-skip 8x8 blocks.  For each block, find the CDEF direction, then apply the specified filter.
 */
-void svt_cdef_filter_fb(uint8_t *dst8, uint16_t *dst16, int32_t dstride, uint16_t *in, int32_t xdec,
-                        int32_t ydec, uint8_t dir[CDEF_NBLOCKS][CDEF_NBLOCKS], int32_t *dirinit,
-                        int32_t var[CDEF_NBLOCKS][CDEF_NBLOCKS], int32_t pli, CdefList *dlist,
-                        int32_t cdef_count, int32_t level, int32_t sec_strength,
-                        int32_t pri_damping, int32_t sec_damping, int32_t coeff_shift,
-                        uint8_t subsampling_factor) {
+void svt_cdef_filter_fb(uint8_t *dst8, uint16_t *dst16, int32_t dstride, uint16_t *in, int32_t xdec, int32_t ydec,
+                        uint8_t dir[CDEF_NBLOCKS][CDEF_NBLOCKS], int32_t *dirinit,
+                        int32_t var[CDEF_NBLOCKS][CDEF_NBLOCKS], int32_t pli, CdefList *dlist, int32_t cdef_count,
+                        int32_t level, int32_t sec_strength, int32_t pri_damping, int32_t sec_damping,
+                        int32_t coeff_shift, uint8_t subsampling_factor) {
     int32_t bi;
     int32_t bx;
     int32_t by;
@@ -414,8 +401,7 @@ void svt_cdef_filter_fb(uint8_t *dst8, uint16_t *dst16, int32_t dstride, uint16_
         bx              = dlist[bi].bx;
         const int32_t t = pli ? pri_strength : adjust_strength(pri_strength, var[by][bx]);
         if (dst8)
-            svt_cdef_filter_block(&dst8[dstride ? (by << bsizey) * dstride + (bx << bsizex)
-                                                : bi << (bsizex + bsizey)],
+            svt_cdef_filter_block(&dst8[dstride ? (by << bsizey) * dstride + (bx << bsizex) : bi << (bsizex + bsizey)],
                                   NULL,
                                   dstride ? dstride : 1 << bsizex,
                                   &in[(by * CDEF_BSTRIDE << bsizey) + (bx << bsizex)],
@@ -429,8 +415,7 @@ void svt_cdef_filter_fb(uint8_t *dst8, uint16_t *dst16, int32_t dstride, uint16_
                                   subsampling_factor);
         else
             svt_cdef_filter_block(NULL,
-                                  &dst16[dstride ? (by << bsizey) * dstride + (bx << bsizex)
-                                                 : bi << (bsizex + bsizey)],
+                                  &dst16[dstride ? (by << bsizey) * dstride + (bx << bsizex) : bi << (bsizex + bsizey)],
                                   dstride ? dstride : 1 << bsizex,
                                   &in[(by * CDEF_BSTRIDE << bsizey) + (bx << bsizex)],
                                   t,

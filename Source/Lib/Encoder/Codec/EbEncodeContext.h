@@ -46,24 +46,6 @@
 // Instead of using x % y, we use x && (y-1)
 #define PARALLEL_GOP_MAX_NUMBER 256
 
-typedef struct DpbDependentList {
-    int32_t  list[1 << MAX_TEMPORAL_LAYERS];
-    uint32_t list_count;
-} DpbDependentList;
-
-typedef struct DPBInfo {
-    uint64_t         picture_number;
-    int32_t          dep_count;
-    int32_t          dep_list0_count;
-    int32_t          dep_list1_count;
-    uint8_t          temporal_layer_index;
-    Bool             is_displayed;
-    Bool             is_used;
-    Bool             is_alt_ref;
-    DpbDependentList dep_list0;
-    DpbDependentList dep_list1;
-} DPBInfo;
-
 typedef struct FirstPassStatsOut {
     FIRSTPASS_STATS *stat;
     size_t           size;
@@ -100,6 +82,10 @@ typedef struct EncodeContext {
 
     EbHandle total_number_of_recon_frame_mutex;
     uint64_t total_number_of_recon_frames;
+#if OPT_LD_LATENCY2
+    EbHandle total_number_of_shown_frames_mutex;
+    uint64_t total_number_of_shown_frames;
+#endif
 
     // Overlay input picture fifo
     EbFifo *overlay_input_picture_pool_fifo_ptr;
@@ -110,6 +96,7 @@ typedef struct EncodeContext {
     // Picture Buffer Fifos
     EbFifo *reference_picture_pool_fifo_ptr;
     EbFifo *pa_reference_picture_pool_fifo_ptr;
+    EbFifo *tpl_reference_picture_pool_fifo_ptr;
     EbFifo *down_scaled_picture_pool_fifo_ptr;
 
     // Picture Decision Reorder Queue
@@ -121,33 +108,35 @@ typedef struct EncodeContext {
     // Picture Manager Pre-Assignment Buffer
     uint32_t          pre_assignment_buffer_intra_count;
     uint32_t          pre_assignment_buffer_idr_count;
-    uint32_t          pre_assignment_buffer_scene_change_count;
-    uint32_t          pre_assignment_buffer_scene_change_index;
     uint32_t          pre_assignment_buffer_eos_flag;
     uint64_t          decode_base_number;
     EbObjectWrapper **pre_assignment_buffer;
     uint32_t          pre_assignment_buffer_count;
 
-    // Picture Decision Circular Queues
-    PaReferenceQueueEntry **picture_decision_pa_reference_queue;
-    uint32_t                picture_decision_pa_reference_queue_head_index;
-    uint32_t                picture_decision_pa_reference_queue_tail_index;
+    // Picture Decision decoded picture buffer - used to track PA refs
+    PaReferenceEntry **pd_dpb;
+#if OPT_LD_LATENCY2
+    // Picture decision and Packetization process both access pd_dpb.
+    // Mutex added for protection
+    EbHandle pd_dpb_mutex;
+#endif
 
     // Picture Manager Circular Queues
-    InputQueueEntry     **input_picture_queue;
-    uint32_t              input_picture_queue_head_index;
-    uint32_t              input_picture_queue_tail_index;
-    ReferenceQueueEntry **reference_picture_queue;
-    uint32_t              reference_picture_queue_head_index;
-    uint32_t              reference_picture_queue_tail_index;
+    InputQueueEntry **input_picture_queue;
+    uint32_t          input_picture_queue_head_index;
+    uint32_t          input_picture_queue_tail_index;
+    // Picture Manager List
+    ReferenceQueueEntry **ref_pic_list;
+    uint32_t              ref_pic_list_length;
+#if OPT_LD_LATENCY2
+    // Picture manager and Packetization process both access ref_pic_list.
+    // Mutex added for protection
+    EbHandle ref_pic_list_mutex;
+#endif
 
     // Initial Rate Control Reorder Queue
     InitialRateControlReorderEntry **initial_rate_control_reorder_queue;
     uint32_t                         initial_rate_control_reorder_queue_head_index;
-    uint32_t                         dep_q_head;
-    uint32_t                         dep_q_tail;
-    PicQueueEntry **
-        dep_cnt_picture_queue; //buffer to sotre all pictures needing dependent-count clean-up in PicMgr
 
     // Packetization Reorder Queue
     PacketizationReorderEntry **packetization_reorder_queue;
@@ -165,9 +154,6 @@ typedef struct EncodeContext {
     uint64_t terminating_picture_number;
     Bool     terminating_sequence_flag_received;
 
-    // Signalling the need for a td structure to be written in the Bitstream - only used in the PK process so no need for a mutex
-    Bool td_needed;
-
     // Prediction Structure
     PredictionStructureGroup *prediction_structure_group_ptr;
 
@@ -178,25 +164,15 @@ typedef struct EncodeContext {
     EbHandle sc_buffer_mutex;
     EncMode  enc_mode;
 
-    // Rate Control
-    uint32_t previous_selected_ref_qp;
-    uint64_t max_coded_poc;
-    uint32_t max_coded_poc_selected_ref_qp;
-
     // Dynamic GOP
     uint32_t         previous_mini_gop_hierarchical_levels;
+    uint64_t         mini_gop_cnt_per_gop;
     EbObjectWrapper *previous_picture_control_set_wrapper_ptr;
-    EbHandle         shared_reference_mutex;
-    uint64_t picture_number_alt; // The picture number overlay includes all the overlay frames
+    uint64_t         picture_number_alt; // The picture number overlay includes all the overlay frames
 
     EbHandle stat_file_mutex;
 
-    //DPB list management
-    DPBInfo              dpb_list[REF_FRAMES];
-    uint64_t             display_picture_number;
     Bool                 is_mini_gop_changed;
-    Bool                 is_i_slice_in_last_mini_gop;
-    uint64_t             i_slice_picture_number_in_last_mini_gop;
     uint64_t             poc_map_idx[MAX_TPL_LA_SW];
     EbPictureBufferDesc *mc_flow_rec_picture_buffer[MAX_TPL_LA_SW];
     EbPictureBufferDesc *mc_flow_rec_picture_buffer_noref;
@@ -222,6 +198,9 @@ typedef struct EncodeContext {
     EbHandle                          rc_param_queue_mutex;
     // reference scaling random access event
     EbRefFrameScale resize_evt;
+    //Superblock end index for cycling refresh through the frame.
+    uint32_t         cr_sb_end;
+    SvtAv1RoiMapEvt *roi_map_evt;
 } EncodeContext;
 
 typedef struct EncodeContextInitData {
@@ -231,6 +210,5 @@ typedef struct EncodeContextInitData {
 /**************************************
  * Extern Function Declarations
  **************************************/
-extern EbErrorType encode_context_ctor(EncodeContext *encode_context_ptr,
-                                       EbPtr          object_init_data_ptr);
+extern EbErrorType svt_aom_encode_context_ctor(EncodeContext *enc_ctx, EbPtr object_init_data_ptr);
 #endif // EbEncodeContext_h

@@ -329,7 +329,7 @@ Overlay picture will not be used as reference, and Overlay picture will only
 reference the associated ALTREF picture with the same picture number.
 
 In set_frame_display_params function, ```frm_hdr->show_frame = EB_TRUE``` and
-```pcs_ptr->has_show_existing = EB_FALSE``` for Overlay picture, so that the
+```pcs->has_show_existing = EB_FALSE``` for Overlay picture, so that the
 associate ALTREF picture will not be displayed, and the reconstructed Overlay
 picture will be displayed instead.
 
@@ -354,7 +354,7 @@ The ALTREF and Overlay picture settings are shown in Table 3.
 ## Notes
 
 The feature settings that are described in this document were compiled at
-v1.3.0 of the code and may not reflect the current status of the code. The
+v1.7.0 of the code and may not reflect the current status of the code. The
 description in this document represents an example showing  how features would
 interact with the SVT architecture. For the most up-to-date settings, it's
 recommended to review the section of the code implementing this feature.

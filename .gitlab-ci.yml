@@ -29,6 +29,7 @@ include:
   - remote: 'https://gitlab.com/AOMediaCodec/aom-testing/-/raw/ci-build-testing/.gitlab/workflows/nightly/.gitlab-ci.yml'
     rules:
       - if: $NIGHTLY != null
+  - local: /.gitlab/workflows/common/.gitlab-ci.yml
   - remote: 'https://gitlab.com/AOMediaCodec/aom-testing/-/raw/ci-build-testing/.gitlab/workflows/weekend-testing/.gitlab-ci.yml'
     rules:
       - if: $WEEKEND != null
@@ -44,21 +45,9 @@ Style check:
     - if: $NIGHTLY == null && $WEEKEND == null
   stage: compile
   image: registry.gitlab.com/aomediacodec/aom-testing/alpine3
+  cache: []
   script:
     - ./test/stylecheck.sh
-    - git fetch ${CI_MERGE_REQUEST_PROJECT_URL:-https://gitlab.com/AOMediaCodec/SVT-AV1.git} "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-HEAD}"
-    - d=$(git diff FETCH_HEAD | /usr/share/clang/clang-format-diff.py -p1)
-    - |
-      if [ -n "$d" ]; then
-        cat <<FOE
-      clang-format check failed!
-      Please run inside a posix compatible shell with git and amend or commit the result
-      git apply -p0 <<EOF
-      $d
-      EOF
-      FOE
-        exit 1
-      fi
 
 Static analysis (cppcheck):
   rules:

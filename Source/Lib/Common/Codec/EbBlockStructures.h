@@ -51,14 +51,12 @@ static const FULLPEL_MV kZeroFullMv = {0, 0};
 static INLINE int       is_zero_mv(const MV *mv) { return *((const uint32_t *)mv) == 0; }
 
 static AOM_INLINE FULLPEL_MV get_fullmv_from_mv(const MV *subpel_mv) {
-    const FULLPEL_MV full_mv = {(int16_t)GET_MV_RAWPEL(subpel_mv->row),
-                                (int16_t)GET_MV_RAWPEL(subpel_mv->col)};
+    const FULLPEL_MV full_mv = {(int16_t)GET_MV_RAWPEL(subpel_mv->row), (int16_t)GET_MV_RAWPEL(subpel_mv->col)};
     return full_mv;
 }
 
 static AOM_INLINE MV get_mv_from_fullmv(const FULLPEL_MV *full_mv) {
-    const MV subpel_mv = {(int16_t)GET_MV_SUBPEL(full_mv->row),
-                          (int16_t)GET_MV_SUBPEL(full_mv->col)};
+    const MV subpel_mv = {(int16_t)GET_MV_SUBPEL(full_mv->row), (int16_t)GET_MV_SUBPEL(full_mv->col)};
     return subpel_mv;
 }
 
@@ -117,7 +115,7 @@ typedef struct BlockModeInfoEnc {
     uint32_t interp_filters;
 
     MvReferenceFrame ref_frame[2]; // Only for INTER blocks
-    BlockSize        sb_type;
+    BlockSize        bsize;
     PredictionMode   mode;
     PartitionType    partition;
     UvPredictionMode uv_mode; // Only for INTRA blocks
@@ -125,16 +123,18 @@ typedef struct BlockModeInfoEnc {
     uint8_t tx_depth;
     uint8_t comp_group_idx : 1; // possible values: 0,1
     /*!< 0 indicates that a distance based weighted scheme should be used for blending.
-         *   1 indicates that the averaging scheme should be used for blending.*/
+     *   1 indicates that the averaging scheme should be used for blending.*/
     uint8_t compound_idx : 1; // possible values: 0,1
-    uint8_t
-        skip : 1; // possible values: 0,1; skip coeff only. as defined in section 6.10.11 of the av1 text
+    // possible values: 0,1; skip coeff only. as defined in section 6.10.11 of the av1 text
+    uint8_t skip : 1;
 
     /*!< 1 indicates that this block will use some default settings and skip mode info.
-            * 0 indicates that the mode info is not skipped. */
-    uint8_t
-            skip_mode : 1; // possible values: 0,1; skip mode_info + coeff. as defined in section 6.10.10 of the av1 text
+     * 0 indicates that the mode info is not skipped. */
+    // possible values: 0,1; skip mode_info + coeff. as defined in section 6.10.10 of the av1 text
+    uint8_t skip_mode : 1;
     uint8_t use_intrabc : 1; // possible values: 0,1
+
+    uint8_t segment_id;
 
 #if MODE_INFO_DBG
     int32_t mi_row;
@@ -144,7 +144,7 @@ typedef struct BlockModeInfoEnc {
 
 typedef struct BlockModeInfo {
     // Common for both INTER and INTRA blocks
-    BlockSize      sb_type;
+    BlockSize      bsize;
     PredictionMode mode;
     int8_t         skip;
 

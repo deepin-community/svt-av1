@@ -13,13 +13,13 @@
 
 #include "EbEncDecTasks.h"
 
-EbErrorType enc_dec_tasks_ctor(EncDecTasks *context_ptr, EbPtr object_init_data_ptr) {
+static EbErrorType enc_dec_tasks_ctor(EncDecTasks *context_ptr, EbPtr object_init_data_ptr) {
     (void)context_ptr;
     (void)object_init_data_ptr;
 
     return EB_ErrorNone;
 }
-EbErrorType enc_dec_tasks_creator(EbPtr *object_dbl_ptr, EbPtr object_init_data_ptr) {
+EbErrorType svt_aom_enc_dec_tasks_creator(EbPtr *object_dbl_ptr, EbPtr object_init_data_ptr) {
     EncDecTasks *obj;
 
     *object_dbl_ptr = NULL;

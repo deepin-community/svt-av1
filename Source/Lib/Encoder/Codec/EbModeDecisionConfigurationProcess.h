@@ -48,17 +48,13 @@ typedef struct ModeDecisionConfigurationContext {
 } ModeDecisionConfigurationContext;
 
 /**************************************
-     * Extern Function Declarations
-     **************************************/
-EbErrorType mode_decision_configuration_context_ctor(EbThreadContext   *thread_context_ptr,
-                                                     const EbEncHandle *enc_handle_ptr,
-                                                     int input_index, int output_index);
+ * Extern Function Declarations
+ **************************************/
+EbErrorType svt_aom_mode_decision_configuration_context_ctor(EbThreadContext   *thread_ctx,
+                                                             const EbEncHandle *enc_handle_ptr, int input_index,
+                                                             int output_index);
 
-extern void *mode_decision_configuration_kernel(void *input_ptr);
-
-uint8_t svt_aom_get_disallow_below_16x16_picture_level(EncMode           enc_mode,
-                                                       EbInputResolution resolution, Bool is_islice,
-                                                       Bool sc_class1, Bool is_ref);
+extern void *svt_aom_mode_decision_configuration_kernel(void *input_ptr);
 
 #ifdef __cplusplus
 }

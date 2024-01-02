@@ -24,11 +24,11 @@ extern "C" {
 #define ENCDEC_TASKS_SUPERRES_INPUT 3
 
 /**************************************
-     * Process Results
-     **************************************/
+ * Process Results
+ **************************************/
 typedef struct EncDecTasks {
     EbDctor          dctor;
-    EbObjectWrapper *pcs_wrapper_ptr;
+    EbObjectWrapper *pcs_wrapper;
     uint32_t         input_type;
     int16_t          enc_dec_segment_row;
     uint16_t         tile_group_index;
@@ -41,7 +41,7 @@ typedef struct EncDecTasksInitData {
 /**************************************
      * Extern Function Declarations
      **************************************/
-extern EbErrorType enc_dec_tasks_creator(EbPtr *object_dbl_ptr, EbPtr object_init_data_ptr);
+extern EbErrorType svt_aom_enc_dec_tasks_creator(EbPtr *object_dbl_ptr, EbPtr object_init_data_ptr);
 
 #ifdef __cplusplus
 }

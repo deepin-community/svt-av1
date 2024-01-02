@@ -189,7 +189,7 @@ values are set as a function of the base qindex for the picture and are given by
 
 ```c
 pri_damping = 3 + (base_qindex/64);
-sec_damping = 3 + (picture_control_set_ptr->parent_pcs_ptr->base_qindex/64);
+sec_damping = 3 + (pcs->ppcs->base_qindex/64);
 ```
 
 Chroma damping values are always one less than the luma damping values.
@@ -285,8 +285,8 @@ Loop over the 64x64 filter blocks
 The search for the best filter strength pair for each 64x64 block can be
 algorithmically optimized using the features described below. The
 aggressiveness of the CDEF algorithm depends on the CDEF filter mode
-(```picture_control_set_ptr->cdef_level```), which is specified based on the
-encoder preset (```picture_control_set_ptr->enc_mode```).
+(```pcs->cdef_level```), which is specified based on the
+encoder preset (```pcs->enc_mode```).
 
 ### Reducing Number of Filter Strengths Tested
 
@@ -405,7 +405,7 @@ signaled at the filter block level.
 ## Notes
 
 The feature settings that are described in this document were compiled at
-v1.3.0 of the code and may not reflect the current status of the code. The
+v1.7.0 of the code and may not reflect the current status of the code. The
 description in this document represents an example showing how features would
 interact with the SVT architecture. For the most up-to-date settings, it's
 recommended to review the section of the code implementing this feature.
