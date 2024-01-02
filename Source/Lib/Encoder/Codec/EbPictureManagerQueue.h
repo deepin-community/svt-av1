@@ -29,9 +29,6 @@ struct ReferenceQueueEntry; // empty struct definition
 typedef struct InputQueueEntry {
     EbDctor          dctor;
     EbObjectWrapper *input_object_ptr;
-    uint32_t         dependent_count;
-    ReferenceList   *list0_ptr;
-    ReferenceList   *list1_ptr;
     uint32_t         use_count;
     Bool             memory_mgmt_loop_done;
     Bool             rate_control_loop_done;
@@ -47,36 +44,26 @@ typedef struct ReferenceQueueEntry {
     uint64_t         picture_number;
     uint64_t         decode_order;
     EbObjectWrapper *reference_object_ptr;
-    EbObjectWrapper *ref_wraper;
-    uint32_t         dependent_count;
     Bool             release_enable;
     Bool             reference_available;
-    uint32_t         dep_list0_count;
-    uint32_t         dep_list1_count;
-    DependentList    list0;
-    DependentList    list1;
-    Bool             is_used_as_reference_flag;
+    Bool             is_ref;
     uint64_t         rc_group_index;
     Bool             is_alt_ref;
     Bool             feedback_arrived;
     SliceType        slice_type;
     uint8_t          temporal_layer_index;
     Bool             frame_context_updated;
+    uint8_t          refresh_frame_mask;
+    // decode order of the last frame to use the current entry as a reference
+    uint64_t dec_order_of_last_ref;
+    // True if frame_end_cdf_update_mode is enabled for this frame
+    bool frame_end_cdf_update_required;
+    bool is_valid;
 } ReferenceQueueEntry;
 
-typedef struct PicQueueEntry {
-    EbDctor dctor;
+extern EbErrorType svt_aom_input_queue_entry_ctor(InputQueueEntry *entry_ptr);
 
-    uint64_t pic_num;
-    int32_t
-        dep_cnt_diff; //increase(e.g 4L->5L) or decrease of dep cnt . not including the run-time decrease
-    uint8_t is_done;
-} PicQueueEntry;
-
-extern EbErrorType input_queue_entry_ctor(InputQueueEntry *entry_ptr);
-
-extern EbErrorType reference_queue_entry_ctor(ReferenceQueueEntry *entry_ptr);
-extern EbErrorType dep_cnt_queue_entry_ctor(PicQueueEntry *entry_ptr);
+extern EbErrorType svt_aom_reference_queue_entry_ctor(ReferenceQueueEntry *entry_ptr);
 
 #ifdef __cplusplus
 }

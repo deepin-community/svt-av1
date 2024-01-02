@@ -164,8 +164,7 @@ class EncParamTestBase : public ::testing::Test {
 #define DEFINE_PARAM_TEST_CLASS(test_name, param_name)                        \
     class test_name : public EncParamTestBase {                               \
       public:                                                                 \
-        test_name() : EncParamTestBase(#param_name) {                         \
-        }                                                                     \
+        test_name() : EncParamTestBase(#param_name) {}                        \
         virtual void run_default_param_check() override {                     \
             EncParamTestBase::SetUp();                                        \
             ASSERT_EQ(ctxt_.enc_params.param_name,                            \
@@ -202,8 +201,7 @@ class EncParamTestBase : public ::testing::Test {
         }                                                                     \
                                                                               \
       protected:                                                              \
-        virtual void SetUp() override {                                       \
-            /* skip EncParamTestBase::SetUp() */                              \
+        virtual void SetUp() override { /* skip EncParamTestBase::SetUp() */  \
         }                                                                     \
         virtual void TearDown() override {                                    \
             /* skip EncParamTestBase::TearDown() */                           \
@@ -241,10 +239,6 @@ PARAM_TEST(EncParamSrcHeightTest);
 /** Test case for encoder_bit_depth*/
 DEFINE_PARAM_TEST_CLASS(EncParamEncBitDepthTest, encoder_bit_depth);
 PARAM_TEST(EncParamEncBitDepthTest);
-
-/** Test case for compressed_ten_bit_format*/
-DEFINE_PARAM_TEST_CLASS(EncParamCompr10BitFmtTest, compressed_ten_bit_format);
-PARAM_TEST(EncParamCompr10BitFmtTest);
 
 /** Test case for qp*/
 DEFINE_PARAM_TEST_CLASS(EncParamQPTest, qp);

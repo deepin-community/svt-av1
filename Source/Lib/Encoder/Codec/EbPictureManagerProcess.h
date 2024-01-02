@@ -29,14 +29,18 @@ typedef struct PictureManagerContext {
     EbFifo  *picture_control_set_fifo_ptr;
     EbFifo  *recon_coef_fifo_ptr;
     uint64_t pmgr_dec_order;
+    uint64_t consecutive_dec_order;
+    uint64_t started_pics_dec_order[REFERENCE_QUEUE_MAX_DEPTH]; // TODO: shorten this
+    int      started_pics_dec_order_head_idx;
+    int      started_pics_dec_order_tail_idx;
 } PictureManagerContext;
 /***************************************
-     * Extern Function Declaration
-     ***************************************/
-EbErrorType picture_manager_context_ctor(EbThreadContext   *thread_context_ptr,
-                                         const EbEncHandle *enc_handle_ptr, int rate_control_index);
+ * Extern Function Declaration
+ ***************************************/
+EbErrorType svt_aom_picture_manager_context_ctor(EbThreadContext *thread_ctx, const EbEncHandle *enc_handle_ptr,
+                                                 int rate_control_index);
 
-extern void *picture_manager_kernel(void *input_ptr);
+extern void *svt_aom_picture_manager_kernel(void *input_ptr);
 
 #ifdef __cplusplus
 }

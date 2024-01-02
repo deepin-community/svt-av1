@@ -22,6 +22,11 @@ typedef struct TransformUnit {
     uint16_t nz_coef_count[3];
     TxType   transform_type[PLANE_TYPES];
 } TransformUnit;
+
+typedef struct EcTransformUnit {
+    uint16_t nz_coef_count[3];
+    TxType   transform_type[PLANE_TYPES];
+} EcTransformUnit;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

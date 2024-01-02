@@ -13,35 +13,29 @@
 #include "corner_match.h"
 #include "EbDefinitions.h"
 
-DECLARE_ALIGNED(16, static const uint8_t, byte_mask[16]) = {
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0};
-#ifndef MATCH_SZ
-#define MATCH_SZ 13
-#endif
-#if MATCH_SZ != 13
-#error "Need to change byte_mask in corner_match_sse4.c if MATCH_SZ != 13"
-#endif
-
 /* Compute quad of corr(im1, im2) * MATCH_SZ * stddev(im1), where the
 correlation/standard deviation are taken over MATCH_SZ by MATCH_SZ windows
 of each image, centered at (x1, y1) and (x2, y2) respectively.
 */
-double svt_av1_compute_cross_correlation_avx2(unsigned char *im1, int stride1, int x1, int y1,
-                                              unsigned char *im2, int stride2, int x2, int y2) {
+double svt_av1_compute_cross_correlation_avx2(unsigned char *im1, int stride1, int x1, int y1, unsigned char *im2,
+                                              int stride2, int x2, int y2, uint8_t match_sz) {
     int           i, stride1_i = 0, stride2_i = 0;
     __m256i       temp1, sum_vec, sumsq2_vec, cross_vec, v, v1_1, v2_1;
-    const __m128i mask = _mm_loadu_si128((__m128i *)byte_mask);
-    const __m256i zero = _mm256_setzero_si256();
+    const uint8_t match_sz_by2 = ((match_sz - 1) / 2);
+    const uint8_t match_sz_sq  = (match_sz * match_sz);
+
+    int           mask_idx = match_sz / 2;
+    const __m128i mask     = _mm_loadu_si128((__m128i *)svt_aom_compute_cross_byte_mask[mask_idx]);
+    const __m256i zero     = _mm256_setzero_si256();
     __m128i       v1, v2;
 
     sum_vec    = zero;
     sumsq2_vec = zero;
     cross_vec  = zero;
+    im1 += (y1 - match_sz_by2) * stride1 + (x1 - match_sz_by2);
+    im2 += (y2 - match_sz_by2) * stride2 + (x2 - match_sz_by2);
 
-    im1 += (y1 - MATCH_SZ_BY2) * stride1 + (x1 - MATCH_SZ_BY2);
-    im2 += (y2 - MATCH_SZ_BY2) * stride2 + (x2 - MATCH_SZ_BY2);
-
-    for (i = 0; i < MATCH_SZ; ++i) {
+    for (i = 0; i < match_sz; ++i) {
         v1   = _mm_and_si128(_mm_loadu_si128((__m128i *)&im1[stride1_i]), mask);
         v1_1 = _mm256_cvtepu8_epi16(v1);
         v2   = _mm_and_si128(_mm_loadu_si128((__m128i *)&im2[stride2_i]), mask);
@@ -70,8 +64,8 @@ double svt_av1_compute_cross_correlation_avx2(unsigned char *im1, int stride1, i
     int sumsq2_acc    = _mm_cvtsi128_si32(low_sumsq);
     int cross_acc     = _mm_extract_epi32(low_sumsq, 2);
 
-    int var2 = sumsq2_acc * MATCH_SZ_SQ - sum2_acc * sum2_acc;
-    int cov  = cross_acc * MATCH_SZ_SQ - sum1_acc * sum2_acc;
+    int var2 = sumsq2_acc * match_sz_sq - sum2_acc * sum2_acc;
+    int cov  = cross_acc * match_sz_sq - sum1_acc * sum2_acc;
     aom_clear_system_state();
     if (cov < 0) {
         return 0;

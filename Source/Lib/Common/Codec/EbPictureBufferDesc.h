@@ -52,8 +52,8 @@ typedef struct EbPictureBufferDesc {
     uint16_t stride_bit_inc_cr; // pointer to the V chroma buffer Bit increment
 
     // Picture Parameters
-    uint16_t      origin_x; // Horizontal padding distance
-    uint16_t      origin_y; // Vertical padding distance
+    uint16_t      org_x; // Horizontal padding distance
+    uint16_t      org_y; // Vertical padding distance
     uint16_t      origin_bot_y; // Vertical bottom padding distance
     uint16_t      width; // Luma picture width which excludes the padding
     uint16_t      height; // Luma picture height which excludes the padding
@@ -70,8 +70,9 @@ typedef struct EbPictureBufferDesc {
     Bool     film_grain_flag; // Indicates if film grain parameters are present for the frame
     uint32_t buffer_enable_mask;
 
-    Bool
-        is_16bit_pipeline; // internal bit-depth: when equals 1 internal bit-depth is 16bits regardless of the input bit-depth
+    // internal bit-depth: when equals 1 internal bit-depth is 16bits regardless of the input
+    // bit-depth
+    Bool is_16bit_pipeline;
 } EbPictureBufferDesc;
 
 #define YV12_FLAG_HIGHBITDEPTH 8
@@ -158,10 +159,10 @@ typedef struct Yv12BufferConfig {
     int32_t flags;
 } Yv12BufferConfig;
 
-void link_eb_to_aom_buffer_desc(EbPictureBufferDesc *picBuffDsc, Yv12BufferConfig *aomBuffDsc,
-                                uint16_t pad_right, uint16_t pad_bottom, Bool is_16bit);
+void svt_aom_link_eb_to_aom_buffer_desc(EbPictureBufferDesc *picBuffDsc, Yv12BufferConfig *aomBuffDsc,
+                                        uint16_t pad_right, uint16_t pad_bottom, Bool is_16bit);
 
-void link_eb_to_aom_buffer_desc_8bit(EbPictureBufferDesc *picBuffDsc, Yv12BufferConfig *aomBuffDsc);
+void svt_aom_link_eb_to_aom_buffer_desc_8bit(EbPictureBufferDesc *picBuffDsc, Yv12BufferConfig *aomBuffDsc);
 
 typedef struct AomCodecFrameBuffer {
     uint8_t *data; /**< pointer to the data buffer */
@@ -216,7 +217,7 @@ typedef struct EbPictureBufferDescInitData {
 
     uint8_t mfmv;
     Bool    is_16bit_pipeline;
-    int8_t  enc_mode;
+    EncMode enc_mode;
     int32_t sb_total_count;
 } EbPictureBufferDescInitData;
 
@@ -226,11 +227,9 @@ typedef struct EbPictureBufferDescInitData {
 
 extern EbErrorType svt_picture_buffer_desc_ctor_noy8b(EbPictureBufferDesc *object_ptr,
                                                       const EbPtr          object_init_data_ptr);
-extern EbErrorType svt_picture_buffer_desc_ctor(EbPictureBufferDesc *object_ptr,
-                                                const EbPtr          object_init_data_ptr);
+extern EbErrorType svt_picture_buffer_desc_ctor(EbPictureBufferDesc *object_ptr, const EbPtr object_init_data_ptr);
 
-extern EbErrorType svt_recon_picture_buffer_desc_ctor(EbPictureBufferDesc *object_ptr,
-                                                      EbPtr                object_init_data_ptr);
+extern EbErrorType svt_recon_picture_buffer_desc_ctor(EbPictureBufferDesc *object_ptr, EbPtr object_init_data_ptr);
 
 #ifdef __cplusplus
 }

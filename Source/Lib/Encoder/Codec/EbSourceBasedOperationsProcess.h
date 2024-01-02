@@ -18,13 +18,14 @@
 /***************************************
  * Extern Function Declaration
  ***************************************/
-EbErrorType  tpl_disp_context_ctor(EbThreadContext   *thread_context_ptr,
-                                   const EbEncHandle *enc_handle_ptr, int index, int tasks_index);
-extern void *tpl_disp_kernel(void *input_ptr);
-EbErrorType  source_based_operations_context_ctor(EbThreadContext   *thread_context_ptr,
-                                                  const EbEncHandle *enc_handle_ptr, int tpl_index,
-                                                  int index);
+EbErrorType  svt_aom_tpl_disp_context_ctor(EbThreadContext *thread_ctx, const EbEncHandle *enc_handle_ptr, int index,
+                                           int tasks_index);
+extern void *svt_aom_tpl_disp_kernel(void *input_ptr);
+void         generate_lambda_scaling_factor(PictureParentControlSet *pcs, int64_t mc_dep_cost_base);
+void         svt_aom_generate_r0beta(PictureParentControlSet *pcs);
+EbErrorType svt_aom_source_based_operations_context_ctor(EbThreadContext *thread_ctx, const EbEncHandle *enc_handle_ptr,
+                                                         int tpl_index, int index);
 
-extern void *source_based_operations_kernel(void *input_ptr);
+extern void *svt_aom_source_based_operations_kernel(void *input_ptr);
 
 #endif // EbSourceBasedOperations_h

@@ -17,8 +17,8 @@ The encoder parameters are listed in this table below along with their
 | ---------------------------------- | -------------------- | ------------ | ------------- | ----------------------------------------------------------------------------------------------------------------- |
 |                                    | --help               |              |               | Shows the command line options currently available                                                                |
 |                                    | --version            |              |               | Shows the version of the library that's linked to the library                                                     |
-| **InputFile**                      | -i                   | any string   | None          | Input raw video (y4m and yuv) file path, use `stdin` to read from pipe                                            |
-| **StreamFile**                     | -b                   | any string   | None          | Output compressed (ivf) file path, use `stdout` to write to pipe                                                  |
+| **InputFile**                      | -i                   | any string   | None          | Input raw video (y4m and yuv) file path, use `stdin` or `-` to read from pipe                                     |
+| **StreamFile**                     | -b                   | any string   | None          | Output compressed (ivf) file path, use `stdout` or `-` to write to pipe                                           |
 |                                    | -c                   | any string   | None          | Configuration file path                                                                                           |
 | **ErrorFile**                      | --errlog             | any string   | `stderr`      | Error file path                                                                                                   |
 | **ReconFile**                      | -o                   | any string   | None          | Reconstructed yuv file path                                                                                       |
@@ -26,7 +26,7 @@ The encoder parameters are listed in this table below along with their
 | **PredStructFile**                 | --pred-struct-file   | any string   | None          | Manual prediction structure file path                                                                             |
 | **Progress**                       | --progress           | [0-2]        | 1             | Verbosity of the output [0: no progress is printed, 2: aomenc style output]                                       |
 | **NoProgress**                     | --no-progress        | [0-1]        | 0             | Do not print out progress [1: `--progress 0`, 0: `--progress 1`]                                                  |
-| **EncoderMode**                    | --preset             | [-2-13]      | 10            | Encoder preset, presets < 0 are for debugging. Higher presets means faster encodes, but with a quality tradeoff   |
+| **EncoderMode**                    | --preset             | [-1-13]      | 10            | Encoder preset, presets < 0 are for debugging. Higher presets means faster encodes, but with a quality tradeoff   |
 | **SvtAv1Params**                   | --svtav1-params      | any string   | None          | Colon-separated list of `key=value` pairs of parameters with keys based on command line options without `--`      |
 |                                    | --nch                | [1-6]        | 1             | Number of channels (library instance) that will be instantiated                                                   |
 
@@ -59,7 +59,8 @@ For more information on valid values for specific keys, refer to the [EbEncSetti
 | **ForcedMaximumFrameWidth**      | --forced-max-frame-width    | [64-16384]                     | None        | Maximum frame width value to force.                                                                           |
 | **ForcedMaximumFrameheight**     | --forced-max-frame-height   | [64-8704]                      | None        | Maximum frame height value to force.                                                                          |
 | **FrameToBeEncoded**             | -n                          | [0-`(2^63)-1`]                 | 0           | Number of frames to encode. If `n` is larger than the input, the encoder will loop back and continue encoding |
-| **BufferedInput**                | --nb                        | [-1, 1-`(2^31)-1`]             | -1          | Buffer `n` input frames into memory and use them to encode                                                    |
+| **FrameToBeSkipped**             | --skip                      | [0-`(2^63)-1`]                 | 0           | Number of frames to skip. |
+| **BufferedInput**                | --nb                        | [-1, 1-`(2^31)-1`]             | -1          | Buffer `n` input frames into memory and use them to encode. Only buffered frames will be encoded.             |
 | **EncoderColorFormat**           | --color-format              | [0-3]                          | 1           | Color format, only yuv420 is supported at this time [0: yuv400, 1: yuv420, 2: yuv422, 3: yuv444]              |
 | **Profile**                      | --profile                   | [0-2]                          | 0           | Bitstream profile [0: main, 1: high, 2: professional]                                                         |
 | **Level**                        | --level                     | [0,2.0-7.3]                    | 0           | Bitstream level, defined in A.3 of the av1 spec [0: auto]                                                     |
@@ -68,55 +69,56 @@ For more information on valid values for specific keys, refer to the [EbEncSetti
 | **FrameRateNumerator**           | --fps-num                   | [0-2^32-1]                     | 60000       | Input video frame rate numerator                                                                              |
 | **FrameRateDenominator**         | --fps-denom                 | [0-2^32-1]                     | 1000        | Input video frame rate denominator                                                                            |
 | **EncoderBitDepth**              | --input-depth               | [8, 10]                        | 8           | Input video file and output bitstream bit-depth                                                               |
-| **CompressedTenBitFormat**       | --compressed-ten-bit-format | [0-1]                          | 0           | Pack 10bit video, handled between the app and library                                                         |
 | **Injector**                     | --inj                       | [0-1]                          | 0           | Inject pictures to the library at defined frame rate                                                          |
 | **InjectorFrameRate**            | --inj-frm-rt                | [0-240]                        | 60          | Set injector frame rate, only applicable with `--inj 1`                                                       |
 | **StatReport**                   | --enable-stat-report        | [0-1]                          | 0           | Calculates and outputs PSNR SSIM metrics at the end of encoding                                               |
 | **Asm**                          | --asm                       | [0-11, c-max]                  | max         | Limit assembly instruction set [c, mmx, sse, sse2, sse3, ssse3, sse4_1, sse4_2, avx, avx2, avx512, max]       |
 | **LogicalProcessors**            | --lp                        | [0, core count of the machine] | 0           | Target (best effort) number of logical cores to be used. 0 means all. Refer to Appendix A.1                   |
-| **PinnedExecution**              | --pin                       | [0-1]                          | 0           | Pin the execution to the first --lp cores. Overwritten to 0 when `--ss` is set. Refer to Appendix A.1         |
+| **PinnedExecution**              | --pin                       | [0-1]                          | 0           | Pin the execution to the first --lp cores. Overwritten to 1 when `--ss` is set. Refer to Appendix A.1         |
 | **TargetSocket**                 | --ss                        | [-1,1]                         | -1          | Specifies which socket to run on, assumes a max of two sockets. Refer to Appendix A.1                         |
-| **FastDecode**                   | --fast-decode               | [0,1]                          | 0           | Tune settings to output bitstreams that can be decoded faster, [0 = OFF, 1 = ON]                              |
-| **Tune**                         | --tune                      | [0,1]                          | 1           | Specifies whether to use PSNR or VQ as the tuning metric [0 = VQ, 1 = PSNR]                                   |
+| **FastDecode**                   | --fast-decode               | [0,1]                          | 0           | Tune settings to output bitstreams that can be decoded faster, [0 = OFF, 1 = ON]. Defaults to 5 temporal layers structure but may override with --hierarchical-levels|
+| **Tune**                         | --tune                      | [0,2]                          | 1           | Specifies whether to use PSNR or VQ as the tuning metric [0 = VQ, 1 = PSNR, 2 = SSIM]                         |
 
 ## Rate Control Options
 
-| **Configuration file parameter** | **Command line**                 | **Range**  | **Default** | **Description**                                                                                                      |
-|----------------------------------|----------------------------------|------------|-------------|----------------------------------------------------------------------------------------------------------------------|
-| **RateControlMode**              | --rc                             | [0-2]      | 0           | Rate control mode [0: CRF or CQP (if `--aq-mode` is 0) [Default], 1: VBR, 2: CBR]                                    |
-| **QP**                           | --qp                             | [1-63]     | 35          | Initial QP level value                                                                                               |
-| **CRF**                          | --crf                            | [1-63]     | 35          | Constant Rate Factor value, setting this value is equal to `--rc 0 --aq-mode 2 --qp x`                               |
-| **TargetBitRate**                | --tbr                            | [1-100000] | 2000        | Target Bitrate (kbps), only applicable for VBR and CBR encoding, also accepts `b`, `k`, and `m` suffixes             |
-| **MaxBitRate**                   | --mbr                            | [1-100000] | 0           | Maximum Bitrate (kbps) only applicable for CRF encoding, also accepts `b`, `k`, and `m` suffixes                     |
-| **UseQpFile**                    | --use-q-file                     | [0-1]      | 0           | Overwrite the encoder default picture based QP assignments and use QP values from `--qp-file`                        |
-| **QpFile**                       | --qpfile                         | any string | Null        | Path to a file containing per picture QP value                                                                       |
-| **MaxQpAllowed**                 | --max-qp                         | [1-63]     | 63          | Maximum (highest) quantizer, only applicable for VBR and CBR                                                         |
-| **MinQpAllowed**                 | --min-qp                         | [1-62]     | 1           | Minimum (lowest) quantizer with the max value being max QP value allowed - 1, only applicable for VBR and CBR        |
-| **AdaptiveQuantization**         | --aq-mode                        | [0-2]      | 2           | Set adaptive QP level [0: off, 1: variance base using AV1 segments, 2: deltaq pred efficiency]                       |
-| **UseFixedQIndexOffsets**        | --use-fixed-qindex-offsets       | [0-2]      | 0           | Overwrite the encoder default hierarchical layer based QP assignment and use fixed Q index offsets                   |
-| **KeyFrameQIndexOffset**         | --key-frame-qindex-offset        | [-256-255] | 0           | Overwrite the encoder default keyframe Q index assignment                                                            |
-| **KeyFrameChromaQIndexOffset**   | --key-frame-chroma-qindex-offset | [-256-255] | 0           | Overwrite the encoder default chroma keyframe Q index assignment                                                     |
-| **LumaYDCQindexOffset**          | --luma-y-dc-qindex-offset        | [-64-63]   | 0           | Overwrite the encoder default dc Q index offset for luma plane                                                       |
-| **ChromaUDCQindexOffset**        | --chroma-u-dc-qindex-offset      | [-64-63]   | 0           | Overwrite the encoder default dc Q index offset for chroma Cb plane                                                  |
-| **ChromaUACQindexOffset**        | --chroma-u-ac-qindex-offset      | [-64-63]   | 0           | Overwrite the encoder default ac Q index offset for chroma Cb plane                                                  |
-| **ChromaVDCQindexOffset**        | --chroma-v-dc-qindex-offset      | [-64-63]   | 0           | Overwrite the encoder default dc Q index offset for chroma Cr plane                                                  |
-| **ChromaVACQindexOffset**        | --chroma-v-ac-qindex-offset      | [-64-63]   | 0           | Overwrite the encoder default ac Q index offset for chroma Cr plane                                                  |
-| **QIndexOffsets**                | --qindex-offsets                 | any string | `0,0,..,0`  | list of luma Q index offsets per hierarchical layer, separated by `,` with each offset in the range of [-256-255]    |
-| **ChromaQIndexOffsets**          | --chroma-qindex-offsets          | any string | `0,0,..,0`  | list of chroma Q index offsets per hierarchical layer, separated by `,` with each offset in the range of [-256-255]  |
-| **UnderShootPct**                | --undershoot-pct                 | [0-100]    | 25          | Allowable datarate undershoot (min) target (%), default depends on the rate control mode                             |
-| **OverShootPct**                 | --overshoot-pct                  | [0-100]    | 25          | Allowable datarate overshoot (max) target (%), default depends on the rate control mode                              |
-| **MbrOverShootPct**              | --mbr-overshoot-pct              | [0-100]    | 50          | Allowable datarate overshoot (max) target (%), Only applicable for Capped CRF                                        |
-| **BufSz**                        | --buf-sz                         | [20-10000] | 1000        | Client maximum buffer size (ms), only applicable for CBR                                                             |
-| **BufInitialSz**                 | --buf-initial-sz                 | [20-10000] | 600         | Client initial buffer size (ms), only applicable for CBR                                                             |
-| **BufOptimalSz**                 | --buf-optimal-sz                 | [20-10000] | 600         | Client optimal buffer size (ms), only applicable for CBR                                                             |
-| **RecodeLoop**                   | --recode-loop                    | [0-4]      | 4           | Recode loop level, look at the "Recode loop level table" in the user's guide for more info [0: off, 4: preset based] |
-| **VBRBiasPct**                   | --bias-pct                       | [0-100]    | 100         | CBR/VBR bias [0: CBR-like, 100: VBR-like]                                                                            |
-| **MinSectionPct**                | --minsection-pct                 | [0-100]    | 0           | GOP min bitrate (expressed as a percentage of the target rate)                                                       |
-| **MaxSectionPct**                | --maxsection-pct                 | [0-10000]  | 2000        | GOP max bitrate (expressed as a percentage of the target rate)                                                       |
-| **GopConstraintRc**              | --gop-constraint-rc              | [0-1]      | 0           | Constrains the rate control to match the target rate for each GoP [0 = OFF, 1 = ON]                                  |
-| **EnableQM**                     | --enable-qm                      | [0-1]      | 0           | Enable quantisation matrices                                                                                         |
-| **MinQmLevel**                   | --qm-min                         | [0-15]     | 8           | Min quant matrix flatness                                                                                            |
-| **MaxQmLevel**                   | --qm-max                         | [0-15]     | 15          | Max quant matrix flatness                                                                                            |
+| **Configuration file parameter** | **Command line**                 | **Range**  | **Default** | **Description**                                                                                                                                      |
+|----------------------------------|----------------------------------|------------|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **RateControlMode**              | --rc                             | [0-2]      | 0           | Rate control mode [0: CRF or CQP (if `--aq-mode` is 0) [Default], 1: VBR, 2: CBR]                                                                    |
+| **QP**                           | --qp                             | [1-63]     | 35          | Initial QP level value                                                                                                                               |
+| **CRF**                          | --crf                            | [1-63]     | 35          | Constant Rate Factor value, setting this value is equal to `--rc 0 --aq-mode 2 --qp x`                                                               |
+| **TargetBitRate**                | --tbr                            | [1-100000] | 2000        | Target Bitrate (kbps), only applicable for VBR and CBR encoding, also accepts `b`, `k`, and `m` suffixes                                             |
+| **MaxBitRate**                   | --mbr                            | [1-100000] | 0           | Maximum Bitrate (kbps) only applicable for CRF encoding, also accepts `b`, `k`, and `m` suffixes                                                     |
+| **UseQpFile**                    | --use-q-file                     | [0-1]      | 0           | Overwrite the encoder default picture based QP assignments and use QP values from `--qp-file`                                                        |
+| **QpFile**                       | --qpfile                         | any string | Null        | Path to a file containing per picture QP value                                                                                                       |
+| **MaxQpAllowed**                 | --max-qp                         | [1-63]     | 63          | Maximum (highest) quantizer, only applicable for VBR and CBR                                                                                         |
+| **MinQpAllowed**                 | --min-qp                         | [1-62]     | 1           | Minimum (lowest) quantizer with the max value being max QP value allowed - 1, only applicable for VBR and CBR                                        |
+| **AdaptiveQuantization**         | --aq-mode                        | [0-2]      | 2           | Set adaptive QP level [0: off, 1: variance base using AV1 segments, 2: deltaq pred efficiency]                                                       |
+| **UseFixedQIndexOffsets**        | --use-fixed-qindex-offsets       | [0-2]      | 0           | Overwrite the encoder default hierarchical layer based QP assignment and use fixed Q index offsets                                                   |
+| **KeyFrameQIndexOffset**         | --key-frame-qindex-offset        | [-64-63] | 0           | Overwrite the encoder default keyframe Q index assignment                                                                                            |
+| **KeyFrameChromaQIndexOffset**   | --key-frame-chroma-qindex-offset | [-64-63] | 0           | Overwrite the encoder default chroma keyframe Q index assignment                                                                                     |
+| **LumaYDCQindexOffset**          | --luma-y-dc-qindex-offset        | [-64-63]   | 0           | Overwrite the encoder default dc Q index offset for luma plane                                                                                       |
+| **ChromaUDCQindexOffset**        | --chroma-u-dc-qindex-offset      | [-64-63]   | 0           | Overwrite the encoder default dc Q index offset for chroma Cb plane                                                                                  |
+| **ChromaUACQindexOffset**        | --chroma-u-ac-qindex-offset      | [-64-63]   | 0           | Overwrite the encoder default ac Q index offset for chroma Cb plane                                                                                  |
+| **ChromaVDCQindexOffset**        | --chroma-v-dc-qindex-offset      | [-64-63]   | 0           | Overwrite the encoder default dc Q index offset for chroma Cr plane                                                                                  |
+| **ChromaVACQindexOffset**        | --chroma-v-ac-qindex-offset      | [-64-63]   | 0           | Overwrite the encoder default ac Q index offset for chroma Cr plane                                                                                  |
+| **QIndexOffsets**                | --qindex-offsets                 | any string | `0,0,..,0`  | list of luma Q index offsets per hierarchical layer, separated by `,` with each offset in the range of [-256-255]                                    |
+| **ChromaQIndexOffsets**          | --chroma-qindex-offsets          | any string | `0,0,..,0`  | list of chroma Q index offsets per hierarchical layer, separated by `,` with each offset in the range of [-256-255]                                  |
+| **UnderShootPct**                | --undershoot-pct                 | [0-100]    | 25          | Allowable datarate undershoot (min) target (%), default depends on the rate control mode                                                             |
+| **OverShootPct**                 | --overshoot-pct                  | [0-100]    | 25          | Allowable datarate overshoot (max) target (%), default depends on the rate control mode                                                              |
+| **MbrOverShootPct**              | --mbr-overshoot-pct              | [0-100]    | 50          | Allowable datarate overshoot (max) target (%), Only applicable for Capped CRF                                                                        |
+| **BufSz**                        | --buf-sz                         | [20-10000] | 1000        | Client maximum buffer size (ms), only applicable for CBR                                                                                             |
+| **BufInitialSz**                 | --buf-initial-sz                 | [20-10000] | 600         | Client initial buffer size (ms), only applicable for CBR                                                                                             |
+| **BufOptimalSz**                 | --buf-optimal-sz                 | [20-10000] | 600         | Client optimal buffer size (ms), only applicable for CBR                                                                                             |
+| **RecodeLoop**                   | --recode-loop                    | [0-4]      | 4           | Recode loop level, look at the "Recode loop level table" in the user's guide for more info [0: off, 4: preset based]                                 |
+| **VBRBiasPct**                   | --bias-pct                       | [0-100]    | 100         | CBR/VBR bias [0: CBR-like, 100: VBR-like]                                                                                                            |
+| **MinSectionPct**                | --minsection-pct                 | [0-100]    | 0           | GOP min bitrate (expressed as a percentage of the target rate)                                                                                       |
+| **MaxSectionPct**                | --maxsection-pct                 | [0-10000]  | 2000        | GOP max bitrate (expressed as a percentage of the target rate)                                                                                       |
+| **GopConstraintRc**              | --gop-constraint-rc              | [0-1]      | 0           | Constrains the rate control to match the target rate for each GoP [0 = OFF, 1 = ON]                                                                  |
+| **EnableQM**                     | --enable-qm                      | [0-1]      | 0           | Enable quantisation matrices                                                                                                                         |
+| **MinQmLevel**                   | --qm-min                         | [0-15]     | 8           | Min quant matrix flatness                                                                                                                            |
+| **MaxQmLevel**                   | --qm-max                         | [0-15]     | 15          | Max quant matrix flatness                                                                                                                            |
+| **LambdaScaleFactors**           | --lambda-scale-factors           | [0- ]      | '128,.,128' | list of scale factors for lambda values used for different SvtAv1FrameUpdateType, separated by `,` divide by 128 is the actual scale factor in float |
+| **RoiMapFile**                   | --roi-map-file                   | any string | Null        | Path to a file containing picture based QP offset map                                                                                                |
 
 ### **UseFixedQIndexOffsets** and more information
 
@@ -192,6 +194,24 @@ SvtAv1EncApp -i in.y4m -b out.ivf --keyint -1 --enable-qm 1 --qm-min 0 --qm-max 
 | 3     | Allow recode for all frame types based on bitrate constraints                   |
 | 4     | Preset based decision                                                           |
 
+### **RoiMapFile** and QP Offset Map file format
+In some applications such as AR / VR, identifying the ROI (Region Of Interest) helps the encoder focus the bit
+usage where it's needed. This is realized by allowing applications to pass a picture based ROI map to the encoder.
+
+The QP Offset Map file contains one or more picture based QP offset maps. Every line consists of a frame number and
+the QP offsets for each 64x64 block set in a row-by-row order. Below is an example ROI map file for a 352x288 content:
+```bash
+0 12 -32 -32 -32 -32 -32 12 -32 -32 -32 -32 -32 16 16 16 16 16 16 16 16 16 16 16 16 16 16 16 16 16 16
+```
+
+The encoder uses alternate quantizer segment feature to set block level qindex and uses alternate loop filter segment feature to set loop filter strength level.
+When both AQ mode 1 (variance base adaptive QP) and ROI are enabled, segment QP is decided by ROI map instead of by variance.
+
+An example command line is:
+
+```bash
+SvtAv1EncApp -i in.y4m -b out.ivf --roi-map-file roi_map.txt
+```
 
 ### Multi-pass Options
 
@@ -214,15 +234,17 @@ SvtAv1EncApp -i in.y4m -b out.ivf --keyint -1 --enable-qm 1 --qm-min 0 --qm-max 
 
 ### GOP size and type Options
 
-| **Configuration file parameter** | **Command line**      | **Range**       | **Default** | **Description**                                                                                                           |
-|----------------------------------|-----------------------|-----------------|-------------|---------------------------------------------------------------------------------------------------------------------------|
-| **Keyint**                       | --keyint              | [-2-`(2^31)-1`] | -2          | GOP size (frames), use `s` suffix for seconds (SvtAv1EncApp only) [-2: ~5 seconds, -1: "infinite" only for CRF, 0: == -1] |
-| **IntraRefreshType**             | --irefresh-type       | [1-2]           | 2           | Intra refresh type [1: FWD Frame (Open GOP), 2: KEY Frame (Closed GOP)]                                                   |
-| **SceneChangeDetection**         | --scd                 | [0-1]           | 0           | Scene change detection control                                                                                            |
-| **Lookahead**                    | --lookahead           | [-1,0-120]      | -1          | Number of frames in the future to look ahead, beyond minigop, temporal filtering, and rate control [-1: auto]             |
-| **HierarchicalLevels**           | --hierarchical-levels | [2-5]           | 4           | Set hierarchical levels beyond the base layer [2: 3 temporal layers, 3: 4 temporal layers, 5: 6 temporal layers]          |
-| **PredStructure**                | --pred-struct         | [1-2]           | 2           | Set prediction structure [1: low delay, 2: random access]                                                                 |
-| **ForceKeyFrames**               | --force-key-frames    | amy string      | None        | Force key frames at the comma separated specifiers. `#f` for frames, `#.#s` for seconds                                   |
+| **Configuration file parameter** | **Command line**      | **Range**       | **Default**       | **Description**                                                                                                                                              |
+|----------------------------------|-----------------------|-----------------|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Keyint**                       | --keyint              | [-2-`(2^31)-1`] | -2                | GOP size (frames), use `s` suffix for seconds (SvtAv1EncApp only) [-2: ~5 seconds, -1: "infinite" only for CRF, 0: == -1]                                    |
+| **IntraRefreshType**             | --irefresh-type       | [1-2]           | 2                 | Intra refresh type [1: FWD Frame (Open GOP), 2: KEY Frame (Closed GOP)]                                                                                      |
+| **SceneChangeDetection**         | --scd                 | [0-1]           | 0                 | Scene change detection control                                                                                                                               |
+| **Lookahead**                    | --lookahead           | [-1,0-120]      | -1                | Number of frames in the future to look ahead, beyond minigop, temporal filtering, and rate control [-1: auto]                                                |
+| **HierarchicalLevels**           | --hierarchical-levels | [2-5]           | <=M12:5 , else: 4 | Set hierarchical levels beyond the base layer [2: 3 temporal layers, 3: 4 temporal layers, 5: 6 temporal layers]                                             |
+| **PredStructure**                | --pred-struct         | [1-2]           | 2                 | Set prediction structure [1: low delay, 2: random access]                                                                                                    |
+| **ForceKeyFrames**               | --force-key-frames    | any string      | None              | Force key frames at the comma separated specifiers. `#f` for frames, `#.#s` for seconds                                                                      |
+| **EnableDg**                     | --enable-dg           | [0-1]           | 1                 | Enable Dynamic GoP. The algorithm changes the hierarchical structure based on the content                                                                    |
+| **StartupMgSize**                | --startup-mg-size     | [0, 2, 3, 4]    | 0                 | Specify another mini-gop configuration for the first mini-gop after the key-frame [0: OFF, 2: 3 temporal layers, 3: 4 temporal layers, 4: 5 temporal layers] |
 
 ### AV1 Specific Options
 
@@ -251,6 +273,9 @@ SvtAv1EncApp -i in.y4m -b out.ivf --keyint -1 --enable-qm 1 --qm-min 0 --qm-max 
 | **ResizeMode**                     | --resize-mode          | [0-4]            | 0             | Enable reference scaling mode                                                                                                                                           |
 | **ResizeDenom**                    | --resize-denom         | [8-16]           | 8             | Reference scaling denominator, only applicable for mode == 1 [8: no scaling, 16: half-scaling]                                                                          |
 | **ResizeKfDenom**                  | --resize-kf-denom      | [8-16]           | 8             | Reference scaling denominator for key frames, only applicable for mode == 1 [8: no scaling, 16: half-scaling]                                                           |
+| **ResizeFrameEvents**              | --frame-resz-events    | any string       | None          | Frame scale events, in a list separated by ',', scaling process starts from the given frame number (0 based) with new denominators, only applicable for mode == 4       |
+| **ResizeFrameKfDenoms**            | --frame-resz-kf-denoms | [8-16]           | 8             | Frame scale denominator for key frames in event, in a list separated by ',', only applicable for mode == 4                                                              |
+| **ResizeFrameDenoms**              | --frame-resz-denoms    | [8-16]           | 8             | Frame scale denominator in event, in a list separated by ',', only applicable for mode == 4                                                                             |
 
 #### **Super-Resolution**
 
@@ -292,8 +317,9 @@ resolution, scaling ratio applys on both horizontally and vertically.
 Example CLI of reference scaling dynamic mode:
 > -i input.yuv -b output.ivf --resize-mode 3 --rc 2 --pred-struct 1 --tbr 1000
 
-TODO: Random access mode is not available until scaling event parameter is
-supported. An example will be added here to guide using random access mode.
+Example CLI of reference scaling random access mode:
+> -i input.yuv -b output.ivf --resize-mode 4 --frame-resz-events 5,10,15,20,25,30 --frame-resz-kf-denoms 8,9,10,11,12,13 --frame-resz-denoms 16,15,14,13,12,11
+`--frame-resz-events`, `--frame-resz-kf-denoms` and `--frame-resz-denoms` shall be all set in same amount of parameters in list
 
 ### Color Description Options
 
@@ -350,12 +376,28 @@ This is an example on how to use them together.
 
 so -lp 4 with --pin 1 would restrict the encoder to work on cpu0-3 and reduce
 the resource allocation to only what's needed to using 4 cores. --lp 4 with
---pin 1, would reduce the allocation to what's needed for 4 cores but not
+--pin 0, would reduce the allocation to what's needed for 4 cores but not
 restrict the encoder to run on cpu 0-3, in this case the encoder might end up
 using more than 4 cores due to the multi-threading nature of the encoder, but
 would at least allow for more multiple -lp4 encodes to run on the same machine
 without them being all restricted to run on cpu 0-3 or overflow the memory
 usage.
+
+When we have --pin 0, --lp behaves similarly to a parallelization level, which higher
+values having higher level of parallelism, not necessarily constrained to a number of
+logical processors. To set cpu affinity beyond the first --lp cores, a cpu affinity
+utility such as taskset or numactl to control could be used to pin execution to
+desired threads.
+
+Example:
+
+taskset --cpu-list 0-3  ./SvtAv1EncApp --preset 4 -q 32  --keyint  200  -i input1.y4m -b svt_1.bin  --lp 4
+taskset --cpu-list 4-7  ./SvtAv1EncApp --preset 4 -q 32  --keyint  200  -i input2.y4m -b svt_2.bin  --lp 4
+
+This example will ensure that the first encode will run on the first 4 cores and the second encode will run on the second 4 cores.
+In this example, If CPU utilization is not saturated for --lp 4 for these cores, higher levels of --lp could be employed for a memory
+usage increase
+
 
 Example: 72 core machine:
 

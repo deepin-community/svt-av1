@@ -48,25 +48,6 @@ static const int8_t inv_cos_bit_row[MAX_TXWH_IDX][MAX_TXWH_IDX] = {
     {INV_COS_BIT, INV_COS_BIT, INV_COS_BIT, INV_COS_BIT, INV_COS_BIT},
     {0, INV_COS_BIT, INV_COS_BIT, INV_COS_BIT, INV_COS_BIT},
     {0, 0, INV_COS_BIT, INV_COS_BIT, INV_COS_BIT}};
-static const int8_t inv_shift_4x4[2]   = {0, -4};
-static const int8_t inv_shift_8x8[2]   = {-1, -4};
-static const int8_t inv_shift_16x16[2] = {-2, -4};
-static const int8_t inv_shift_32x32[2] = {-2, -4};
-static const int8_t inv_shift_64x64[2] = {-2, -4};
-static const int8_t inv_shift_4x8[2]   = {0, -4};
-static const int8_t inv_shift_8x4[2]   = {0, -4};
-static const int8_t inv_shift_8x16[2]  = {-1, -4};
-static const int8_t inv_shift_16x8[2]  = {-1, -4};
-static const int8_t inv_shift_16x32[2] = {-1, -4};
-static const int8_t inv_shift_32x16[2] = {-1, -4};
-static const int8_t inv_shift_32x64[2] = {-1, -4};
-static const int8_t inv_shift_64x32[2] = {-1, -4};
-static const int8_t inv_shift_4x16[2]  = {-1, -4};
-static const int8_t inv_shift_16x4[2]  = {-1, -4};
-static const int8_t inv_shift_8x32[2]  = {-2, -4};
-static const int8_t inv_shift_32x8[2]  = {-2, -4};
-static const int8_t inv_shift_16x64[2] = {-2, -4};
-static const int8_t inv_shift_64x16[2] = {-2, -4};
 
 static const TxType1D vtx_tab[TX_TYPES] = {
     DCT_1D,
@@ -140,17 +121,16 @@ typedef struct Txfm2dFlipCfg {
     int32_t       stage_num_row;
 } Txfm2dFlipCfg;
 
-EbErrorType av1_inv_transform_recon(int32_t *coeff_buffer, //1D buffer
-                                    uint8_t *recon_buffer_r, uint32_t recon_stride_r,
-                                    uint8_t *recon_buffer_w, uint32_t recon_stride_w, TxSize txsize,
-                                    uint32_t bit_increment, TxType transform_type,
-                                    PlaneType component_type, uint32_t eob, uint8_t lossless);
+EbErrorType svt_aom_inv_transform_recon(int32_t *coeff_buffer, //1D buffer
+                                        uint8_t *recon_buffer_r, uint32_t recon_stride_r, uint8_t *recon_buffer_w,
+                                        uint32_t recon_stride_w, TxSize txsize, uint32_t bit_increment,
+                                        TxType transform_type, PlaneType component_type, uint32_t eob,
+                                        uint8_t lossless);
 
-EbErrorType av1_inv_transform_recon8bit(int32_t *coeff_buffer, //1D buffer
-                                        uint8_t *recon_buffer_r, uint32_t recon_stride_r,
-                                        uint8_t *recon_buffer_w, uint32_t recon_stride_w,
-                                        TxSize txsize, TxType transform_type,
-                                        PlaneType component_type, uint32_t eob, uint8_t lossless);
+EbErrorType svt_aom_inv_transform_recon8bit(int32_t *coeff_buffer, //1D buffer
+                                            uint8_t *recon_buffer_r, uint32_t recon_stride_r, uint8_t *recon_buffer_w,
+                                            uint32_t recon_stride_w, TxSize txsize, TxType transform_type,
+                                            PlaneType component_type, uint32_t eob, uint8_t lossless);
 
 static INLINE int32_t av1_get_max_eob(TxSize tx_size) {
     if (tx_size == TX_64X64 || tx_size == TX_64X32 || tx_size == TX_32X64)
@@ -203,13 +183,9 @@ static INLINE void set_flip_cfg(TxType tx_type, Txfm2dFlipCfg *cfg) {
     get_flip_cfg(tx_type, &cfg->ud_flip, &cfg->lr_flip);
 }
 
-static INLINE int32_t get_txw_idx(TxSize tx_size) {
-    return tx_size_wide_log2[tx_size] - tx_size_wide_log2[0];
-}
+static INLINE int32_t get_txw_idx(TxSize tx_size) { return tx_size_wide_log2[tx_size] - tx_size_wide_log2[0]; }
 
-static INLINE int32_t get_txh_idx(TxSize tx_size) {
-    return tx_size_high_log2[tx_size] - tx_size_high_log2[0];
-}
+static INLINE int32_t get_txh_idx(TxSize tx_size) { return tx_size_high_log2[tx_size] - tx_size_high_log2[0]; }
 
 static const TxfmType av1_txfm_type_ls[5][TX_TYPES_1D] = {
     {TXFM_TYPE_DCT4, TXFM_TYPE_ADST4, TXFM_TYPE_ADST4, TXFM_TYPE_IDENTITY4},
@@ -259,15 +235,15 @@ static const int8_t inv_start_range[TX_SIZES_ALL] = {
     7, // 64x16 transform
 };
 
-extern const int32_t eb_av1_cospi_arr_data[7][64];
-extern const int32_t eb_av1_sinpi_arr_data[7][5];
-extern const int8_t *eb_inv_txfm_shift_ls[TX_SIZES_ALL];
+extern const int32_t svt_aom_eb_av1_cospi_arr_data[7][64];
+extern const int32_t svt_aom_eb_av1_sinpi_arr_data[7][5];
+extern const int8_t *svt_aom_inv_txfm_shift_ls[TX_SIZES_ALL];
 
 static const int32_t cos_bit_min = 10;
 
-static INLINE const int32_t *cospi_arr(int32_t n) { return eb_av1_cospi_arr_data[n - cos_bit_min]; }
+static INLINE const int32_t *cospi_arr(int32_t n) { return svt_aom_eb_av1_cospi_arr_data[n - cos_bit_min]; }
 
-static INLINE const int32_t *sinpi_arr(int32_t n) { return eb_av1_sinpi_arr_data[n - cos_bit_min]; }
+static INLINE const int32_t *sinpi_arr(int32_t n) { return svt_aom_eb_av1_sinpi_arr_data[n - cos_bit_min]; }
 
 static const int32_t new_sqrt2_bits = 12;
 // 2^12 * sqrt(2)
@@ -275,8 +251,7 @@ static const int32_t new_sqrt2 = 5793;
 // 2^12 / sqrt(2)
 static const int32_t new_inv_sqrt2 = 2896;
 
-typedef void (*TxfmFunc)(const int32_t *input, int32_t *output, int8_t cos_bit,
-                         const int8_t *stage_range);
+typedef void (*TxfmFunc)(const int32_t *input, int32_t *output, int8_t cos_bit, const int8_t *stage_range);
 
 // Note:
 // TranHigh is the datatype used for intermediate transform stages.
@@ -373,11 +348,11 @@ static const int8_t txsize_log2_minus4[TX_SIZES_ALL] = {
     5, // TX_64X16
 };
 
-int32_t get_qzbin_factor(int32_t q, EbBitDepth bit_depth);
-void    invert_quant(int16_t *quant, int16_t *shift, int32_t d);
-int16_t svt_aom_dc_quant_qtx(int32_t qindex, int32_t delta, EbBitDepth bit_depth);
-int16_t svt_aom_ac_quant_qtx(int32_t qindex, int32_t delta, EbBitDepth bit_depth);
-
+int32_t  svt_aom_get_qzbin_factor(int32_t q, EbBitDepth bit_depth);
+void     svt_aom_invert_quant(int16_t *quant, int16_t *shift, int32_t d);
+int16_t  svt_aom_dc_quant_qtx(int32_t qindex, int32_t delta, EbBitDepth bit_depth);
+int16_t  svt_aom_ac_quant_qtx(int32_t qindex, int32_t delta, EbBitDepth bit_depth);
+TxfmFunc svt_aom_inv_txfm_type_to_func(TxfmType txfmtype);
 #ifdef __cplusplus
 }
 #endif

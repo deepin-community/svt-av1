@@ -27,7 +27,7 @@ The features enabled or changed by each preset are as follows
 
 | **Category**                | **Feature**                                 | **0** | **1** | **2** | **3** | **4** | **5** | **6** | **7** | **8** | **9** | **10** | **11** | **12** |
 | --------------------------- | ------------------------------------------  | ----  | ----  | ----  | ----  | ----  | ----  | ----  | ----  | ----  | ----  | -----  | -----  | -----  |
-| Prediction structure & RC   | Hierarchical levels                         | 5L    | 5L    | 5L    | 5L    | 5L    | 5L    | 5L    | 5L    | 5L    | 5L    | 5L     | 5L     | 5L     |
+| Prediction structure & RC   | Hierarchical levels                         | 6L    | 6L    | 6L    | 6L    | 6L    | 6L    | 6L    | 6L    | 6L    | 6L    | 6L     | 6L     | 6L     |
 |                             | aq-mode                                     | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
 |                             | max reference frame count                   | 7     | 7     | 7     | 7     | 7     | 7     | 4     | 4     | 4     | 4     | 4      | 4      | 4      |
 | Motion Estimation           | Full pel Motion Estimation                  | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
@@ -41,7 +41,7 @@ The features enabled or changed by each preset are as follows
 |                             | Directional Angular modes                   | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
 |                             | Paeth                                       | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | OFF    | OFF    | OFF    |
 |                             | Chroma from Luma (CfL)                      | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
-|                             | Filter intra                                | ON    | ON    | ON    | ON    | ON    | ON    | OFF   | OFF   | OFF   | OFF   | OFF    | OFF    | OFF    |
+|                             | Filter intra                                | ON    | ON    | ON    | ON    | ON    | OFF   | OFF   | OFF   | OFF   | OFF   | OFF    | OFF    | OFF    |
 |                             | Intra block copy (IBC) (SC)                 | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | OFF    | OFF    |
 |                             | Palette prediction (SC)                     | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
 |                             | Single-reference prediction                 | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
@@ -60,8 +60,8 @@ The features enabled or changed by each preset are as follows
 |                             | Transform Size search                       | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
 | AV1 inloop filters          | Deblocking Filter                           | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
 |                             | CDEF                                        | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON     | ON     | ON     |
-|                             | Restoration Filter - Wiener Filter          | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | OFF    | OFF    | OFF    |
-|                             | Restoration Filter - SG Filter              | ON    | ON    | ON    | ON    | ON    | ON    | OFF   | OFF   | OFF   | OFF   | OFF    | OFF    | OFF    |
+|                             | Restoration Filter - Wiener Filter          | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | ON    | OFF   | OFF    | OFF    | OFF    |
+|                             | Restoration Filter - SG Filter              | ON    | ON    | ON    | ON    | ON    | OFF   | OFF   | OFF   | OFF   | OFF   | OFF    | OFF    | OFF    |
 
 
 # Scene Change Detection
@@ -306,7 +306,7 @@ Set `--rc=0` to use this method.
 ## Notes
 
 The feature settings that are described in this document were compiled at
-v1.3.0 of the code and may not reflect the current status of the code. The
+v1.5.0 of the code and may not reflect the current status of the code. The
 description in this document represents an example showing how features would
 interact with the SVT architecture. For the most up-to-date settings, it's
 recommended to review the section of the code implementing this feature.

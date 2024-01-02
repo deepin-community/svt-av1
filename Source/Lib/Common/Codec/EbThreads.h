@@ -56,17 +56,17 @@ extern EbErrorType svt_block_on_mutex(EbHandle mutex_handle);
 extern EbErrorType svt_destroy_mutex(EbHandle mutex_handle);
 #ifdef _WIN32
 
-#define EB_CREATE_THREAD(pointer, thread_function, thread_context)    \
-    do {                                                              \
-        pointer = svt_create_thread(thread_function, thread_context); \
-        EB_ADD_MEM(pointer, 1, EB_THREAD);                            \
-        if (num_groups == 1)                                          \
-            SetThreadAffinityMask(pointer, group_affinity.Mask);      \
-        else if (num_groups == 2 && alternate_groups) {               \
-            group_affinity.Group = 1 - group_affinity.Group;          \
-            SetThreadGroupAffinity(pointer, &group_affinity, NULL);   \
-        } else if (num_groups == 2 && !alternate_groups)              \
-            SetThreadGroupAffinity(pointer, &group_affinity, NULL);   \
+#define EB_CREATE_THREAD(pointer, thread_function, thread_context)           \
+    do {                                                                     \
+        pointer = svt_create_thread(thread_function, thread_context);        \
+        EB_ADD_MEM(pointer, 1, EB_THREAD);                                   \
+        if (num_groups == 1)                                                 \
+            SetThreadAffinityMask(pointer, svt_aom_group_affinity.Mask);     \
+        else if (num_groups == 2 && alternate_groups) {                      \
+            svt_aom_group_affinity.Group = 1 - svt_aom_group_affinity.Group; \
+            SetThreadGroupAffinity(pointer, &svt_aom_group_affinity, NULL);  \
+        } else if (num_groups == 2 && !alternate_groups)                     \
+            SetThreadGroupAffinity(pointer, &svt_aom_group_affinity, NULL);  \
     } while (0)
 
 #else
@@ -79,11 +79,11 @@ extern EbErrorType svt_destroy_mutex(EbHandle mutex_handle);
 #include <sched.h>
 #include <pthread.h>
 #if defined(__linux__)
-#define EB_CREATE_THREAD(pointer, thread_function, thread_context)                           \
-    do {                                                                                     \
-        pointer = svt_create_thread(thread_function, thread_context);                        \
-        EB_ADD_MEM(pointer, 1, EB_THREAD);                                                   \
-        pthread_setaffinity_np(*((pthread_t *)pointer), sizeof(cpu_set_t), &group_affinity); \
+#define EB_CREATE_THREAD(pointer, thread_function, thread_context)                                   \
+    do {                                                                                             \
+        pointer = svt_create_thread(thread_function, thread_context);                                \
+        EB_ADD_MEM(pointer, 1, EB_THREAD);                                                           \
+        pthread_setaffinity_np(*((pthread_t *)pointer), sizeof(cpu_set_t), &svt_aom_group_affinity); \
     } while (0)
 #else
 #define EB_CREATE_THREAD(pointer, thread_function, thread_context)    \
@@ -102,11 +102,10 @@ extern EbErrorType svt_destroy_mutex(EbHandle mutex_handle);
         }                                            \
     } while (0);
 
-#define EB_CREATE_THREAD_ARRAY(pa, count, thread_function, thread_contexts) \
-    do {                                                                    \
-        EB_ALLOC_PTR_ARRAY(pa, count);                                      \
-        for (uint32_t i = 0; i < count; i++)                                \
-            EB_CREATE_THREAD(pa[i], thread_function, thread_contexts[i]);   \
+#define EB_CREATE_THREAD_ARRAY(pa, count, thread_function, thread_contexts)                                \
+    do {                                                                                                   \
+        EB_ALLOC_PTR_ARRAY(pa, count);                                                                     \
+        for (uint32_t i = 0; i < count; i++) EB_CREATE_THREAD(pa[i], thread_function, thread_contexts[i]); \
     } while (0)
 
 #define EB_DESTROY_THREAD_ARRAY(pa, count)                                 \
@@ -117,7 +116,7 @@ extern EbErrorType svt_destroy_mutex(EbHandle mutex_handle);
         }                                                                  \
     } while (0)
 
-void atomic_set_u32(AtomicVarU32 *var, uint32_t in);
+void svt_aom_atomic_set_u32(AtomicVarU32 *var, uint32_t in);
 
 /*
  Condition variable

@@ -574,6 +574,10 @@ where $`\alpha`$ is $`1500000`$ for key frames and $`1300000`$ otherwise. The co
 is as in the VBR case. The qindex that provides the closest rate to the target
 frame size is considered.
 
+After the final qindex of the frame is calculated, its value might be updated under some conditions. Some of these conditions are:
+- Adjust qindex based on source content change to avoid overshoot and undershoot
+- Limit the decrease or increase in qindex from previous frames to produce stable video.
+
 ### Updating the buffer fullness level
 
 The buffer fullness level is initialized at starting_buffer_level. Following
@@ -589,7 +593,7 @@ Picture arriving from Motions Estimation kernel:
 
 | Main Functions                         | Descriptions                                                                                              |
 | -------------                          | ------------------------------                                                                            |
-| if (pcs_ptr->picture_number == 0) {    |                                                                                                           |
+| if (pcs->picture_number == 0) {    |                                                                                                           |
 | set_rc_buffer_sizes();                 | Buffers initialization at the beginning                                                                   |
 | av1_rc_init()                          | RC initialization at the beginning                                                                        |
 | }                                      |                                                                                                           |
@@ -614,7 +618,7 @@ More details for some of the main functions:
 | process_first_pass_stats()            | Performed on a frame basis. Parts of it are for initialization at POC0, the rest is per frame. |
 | if (key_frame)                        |                                                                                                |
 | kf_group_rate_assingment();                | Rate assignment for the next kf group                                           |
-| if (pcs_ptr->is_new_GF_group)         |                                                                                                |
+| if (pcs->is_new_GF_group)         |                                                                                                |
 | gf_group_rate_assingment () }         | Define the GF_group (mini-GoP) bits and assign bits per frame based on the target rate         |
 
 | rc_pick_q_and_bounds() { {                 | Descriptions                                                                                                  |
@@ -682,7 +686,7 @@ is currently supported with VBR mode when GoP size is 120 frames or more.
 ## Notes
 
 The feature settings that are described in this document were compiled at
-v1.3.0 of the code and may not reflect the current status of the code. The
+v1.7.0 of the code and may not reflect the current status of the code. The
 description in this document represents an example showing how features would
 interact with the SVT architecture. For the most up-to-date settings, it's
 recommended to review the section of the code implementing this feature.

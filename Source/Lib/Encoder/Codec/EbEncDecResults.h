@@ -19,28 +19,28 @@
 extern "C" {
 #endif
 /**************************************
-     * Process Results
-     **************************************/
+ * Process Results
+ **************************************/
 typedef struct EncDecResults {
     EbDctor          dctor;
-    EbObjectWrapper *pcs_wrapper_ptr;
+    EbObjectWrapper *pcs_wrapper;
 } EncDecResults;
 
 typedef struct DlfResults {
     EbDctor          dctor;
-    EbObjectWrapper *pcs_wrapper_ptr;
+    EbObjectWrapper *pcs_wrapper;
     uint32_t         segment_index;
 } DlfResults;
 
 typedef struct CdefResults {
     EbDctor          dctor;
-    EbObjectWrapper *pcs_wrapper_ptr;
+    EbObjectWrapper *pcs_wrapper;
     uint32_t         segment_index;
 } CdefResults;
 
 typedef struct RestResults {
     EbDctor          dctor;
-    EbObjectWrapper *pcs_wrapper_ptr;
+    EbObjectWrapper *pcs_wrapper;
     uint16_t         tile_index;
 } RestResults;
 
@@ -51,7 +51,7 @@ typedef struct EncDecResultsInitData {
 /**************************************
      * Extern Function Declarations
      **************************************/
-extern EbErrorType enc_dec_results_creator(EbPtr *object_dbl_ptr, EbPtr object_init_data_ptr);
+extern EbErrorType svt_aom_enc_dec_results_creator(EbPtr *object_dbl_ptr, EbPtr object_init_data_ptr);
 
 #ifdef __cplusplus
 }

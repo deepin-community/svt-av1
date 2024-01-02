@@ -59,6 +59,11 @@ typedef struct BitstreamLevel {
     uint8_t minor;
 } BitstreamLevel;
 
+typedef struct List0OnlyBase {
+    uint8_t enabled;
+    uint8_t list0_only_base_th;
+} List0OnlyBase;
+
 /************************************
      * Sequence Control Set
      ************************************/
@@ -66,12 +71,10 @@ typedef struct SequenceControlSet {
     /*!< Pointer to the dtor of the struct*/
     EbDctor dctor;
     /*!< Encoding context pointer containing the handle pointer */
-    EncodeContext *encode_context_ptr;
+    EncodeContext *enc_ctx;
     /*!< 2ndpass enc mode, available at firstpass encoder */
     /*!< API structure */
     EbSvtAv1EncConfiguration static_config;
-    /*!< Pointer to prediction structure containing the mini-gop information */
-    PredictionStructure *pred_struct_ptr;
     /*!< Super block geomerty pointer */
     SbGeom *sb_geom;
     /*!< Array of superblock parameters computed at the resource coordination stage */
@@ -85,11 +88,6 @@ typedef struct SequenceControlSet {
             parameters/features are set to be set for the full stream
             but encoding decisions may still be taken at a picture / sub picture level
     */
-
-    /*!< Maximum number of references that a picture can have within the stream needs to be cleaned up*/
-    uint32_t max_ref_count;
-    /*!< Maximum number of references that a picture can have within the stream */
-    uint32_t reference_count;
     /*!< Maximum number of allowed temporal layers */
     uint32_t max_temporal_layers;
     /*!< Overflow bits used for the picture order count increments */
@@ -106,20 +104,21 @@ typedef struct SequenceControlSet {
     /*!< Down-sampling method @ ME and alt-ref temporal filtering
         (The signal changes per preset; 0: filtering, 1: decimation) Default is 0. */
     uint8_t  down_sampling_method_me_search;
-    uint32_t geom_idx; //geometry type
+    uint32_t svt_aom_geom_idx; //geometry type
 
     /*  1..15    | 17..31  | 33..47  |
               16 |       32|       48|
       lad mg=2: delay the first MG (1-16) until the next 2 MGs(17-48) are gop , TF, and ME ready
     */
-    uint8_t
-        lad_mg; //delay all pictures within a given MG, until N future MGs are  gop , TF, and ME ready
-    uint8_t
-        tpl_lad_mg; //delay all pictures within a given MG, until N future MGs are  gop , TF, and ME ready used for tpl
-    /*!< 1: Specifies that loop restoration filter should use boundary pixels in the search.  Must be
-            set at the sequence level because it requires a buffer allocation to copy the pixels
-            to be used in the search.
-         0: Specifies that loop restoration filter should not use boundary pixels in the search.*/
+    // delay all pictures within a given MG, until N future MGs are  gop , TF, and ME ready
+    uint8_t lad_mg;
+    // delay all pictures within a given MG, until N future MGs are  gop , TF, and ME ready used for
+    // tpl
+    uint8_t tpl_lad_mg;
+    /*!< 1: Specifies that loop restoration filter should use boundary pixels in the search.  Must
+       be set at the sequence level because it requires a buffer allocation to copy the pixels to be
+       used in the search. 0: Specifies that loop restoration filter should not use boundary pixels
+       in the search.*/
     uint8_t use_boundaries_in_rest_search;
     uint8_t enable_pic_mgr_dec_order; // if enabled: pic mgr starts pictures in dec order
     uint8_t enable_dec_order; // if enabled: encoding are in dec order
@@ -129,6 +128,9 @@ typedef struct SequenceControlSet {
     /*!< Allow the usage of motion field motion vector in the stream
         (The signal changes per preset; 0: Enabled, 1: Disabled) Default is 1. */
     uint8_t mfmv_enabled;
+    /*!< Enable dynamic GoP
+        (The signal changes per preset; 0: Disabled, 1: Enabled) Default is 1. */
+    uint8_t enable_dg;
     /*!< Film grain seed */
     uint16_t film_grain_random_seed;
     /*!< over_boundary_block: pad resolution to a multiple of SB for smaller overhead
@@ -140,25 +142,25 @@ typedef struct SequenceControlSet {
     uint8_t compound_mode;
 
     /*!< Sequence resolution parameters */
-    uint32_t chroma_format_idc;
-    uint16_t subsampling_x; // add chroma subsampling parameters
-    uint16_t subsampling_y;
-    uint16_t max_input_luma_width; // input luma width aligned to 8, this is used during encoding
-    uint16_t max_input_luma_height; // input luma height aligned to 8, this is used during encoding
-    uint16_t max_input_chroma_width;
-    uint16_t max_input_chroma_height;
-    uint16_t max_input_pad_bottom;
-    uint16_t max_input_pad_right;
-    uint32_t chroma_width;
-    uint32_t chroma_height;
-    uint32_t pad_right;
-    uint32_t pad_bottom;
-    uint16_t left_padding;
-    uint16_t top_padding;
-    uint16_t right_padding;
-    uint16_t bot_padding;
-    uint32_t frame_rate; //stored in Q16
-    uint32_t encoder_bit_depth;
+    uint32_t          chroma_format_idc;
+    uint16_t          subsampling_x; // add chroma subsampling parameters
+    uint16_t          subsampling_y;
+    uint16_t          max_input_luma_width; // input luma width aligned to 8, this is used during encoding
+    uint16_t          max_input_luma_height; // input luma height aligned to 8, this is used during encoding
+    uint16_t          max_input_chroma_width;
+    uint16_t          max_input_chroma_height;
+    uint16_t          max_input_pad_bottom;
+    uint16_t          max_input_pad_right;
+    uint32_t          chroma_width;
+    uint32_t          chroma_height;
+    uint32_t          pad_right;
+    uint32_t          pad_bottom;
+    uint16_t          left_padding;
+    uint16_t          top_padding;
+    uint16_t          right_padding;
+    uint16_t          bot_padding;
+    uint32_t          frame_rate; //stored in Q16
+    uint32_t          encoder_bit_depth;
     EbInputResolution input_resolution;
 
     /*!< Super block parameters set for the stream */
@@ -199,6 +201,11 @@ typedef struct SequenceControlSet {
     uint32_t picture_control_set_pool_init_count_child;
     uint32_t enc_dec_pool_init_count;
     uint32_t pa_reference_picture_buffer_init_count;
+    uint32_t tpl_reference_picture_buffer_init_count;
+    /* ref_buffer_available_semaphore is needed so that all REF pictures
+    sent to PM will have an available ref buffer. If ref buffers are
+    not available in PM, it will result in a deadlock.*/
+    EbHandle ref_buffer_available_semaphore;
     uint32_t reference_picture_buffer_init_count;
     uint32_t input_buffer_fifo_init_count;
     uint32_t overlay_input_picture_buffer_init_count;
@@ -247,14 +254,15 @@ typedef struct SequenceControlSet {
     uint8_t          mvrate_set;
     VqCtrls          vq_ctrls;
     MiniGopSizeCtrls mgs_ctls;
+    uint8_t          calc_hist;
     TfControls       tf_params_per_type[3]; // [I_SLICE][BASE][L1]
     MrpCtrls         mrp_ctrls;
     /*!< The RC stat generation pass mode (0: The default, 1: optimized)*/
     uint8_t rc_stat_gen_pass_mode;
     int     cqp_base_q_tf;
     int     cqp_base_q;
-    uint8_t
-                    is_short_clip; //less than 200 frames or gop_constraint_rc is set, used in VBR and set in multipass encode
+    // less than 200 frames or gop_constraint_rc is set, used in VBR and set in multipass encode
+    uint8_t         is_short_clip;
     uint8_t         passes;
     IppPassControls ipp_pass_ctrls;
     MidPassControls mid_pass_ctrls;
@@ -290,12 +298,6 @@ typedef struct SequenceControlSet {
     *
     * Default is 1. */
     Bool enable_global_motion;
-
-    /* inter intra compound
-    *
-    * Default is -1. */
-    int inter_intra_compound;
-
     /* enable paeth
     *
     * Default is -1. */
@@ -337,23 +339,6 @@ typedef struct SequenceControlSet {
     *
     * Default is -1. */
     int compound_level;
-    /* Disable chroma from luma (CFL)
-    *
-    * Default is -1 (auto) */
-    int disable_cfl_flag;
-    /* obmc_level specifies the level of the OBMC feature that would be
-    * considered when the level is specified in the command line instruction (CLI).
-    * The meaning of the feature level in the CLI is different from that for
-    * the default settings. See description of pic_obmc_level for the full details.
-    *
-    * The table below specifies the meaning of obmc_level when specified in the CLI.
-    *     obmc_level   | Command Line Settings
-    *        -1        | Default settings (auto)
-    *         0        | OFF everywhere in encoder
-    *         1        | ON
-    *
-    * Default is -1 (auto). */
-    int8_t obmc_level;
     /* RDOQ
     *
     * -1: Default, 0: OFF, 1: ON. */
@@ -421,11 +406,14 @@ typedef struct SequenceControlSet {
     bool stats_based_sb_lambda_modulation;
     // Desired dimensions for an externally triggered resize
     ResizePendingParams resize_pending_params;
+    // Enable low latency KF coding for RTC
+    bool          low_latency_kf;
+    List0OnlyBase list0_only_base_ctrls;
 } SequenceControlSet;
 typedef struct EbSequenceControlSetInstance {
     EbDctor             dctor;
-    EncodeContext      *encode_context_ptr;
-    SequenceControlSet *scs_ptr;
+    EncodeContext      *enc_ctx;
+    SequenceControlSet *scs;
 } EbSequenceControlSetInstance;
 
 /**************************************
@@ -433,12 +421,11 @@ typedef struct EbSequenceControlSetInstance {
      **************************************/
 extern EbErrorType svt_sequence_control_set_instance_ctor(EbSequenceControlSetInstance *object_ptr);
 
-extern EbErrorType b64_geom_init(SequenceControlSet *scs_ptr);
+extern EbErrorType svt_aom_b64_geom_init(SequenceControlSet *scs);
 
-extern EbErrorType derive_input_resolution(EbInputResolution *input_resolution,
-                                           uint32_t           input_size);
+extern EbErrorType svt_aom_derive_input_resolution(EbInputResolution *input_resolution, uint32_t input_size);
 
-EbErrorType sb_geom_init(SequenceControlSet *scs_ptr);
+EbErrorType svt_aom_sb_geom_init(SequenceControlSet *scs);
 
 #ifdef __cplusplus
 }
