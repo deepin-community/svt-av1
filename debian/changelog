@@ -1,3 +1,9 @@
+svt-av1 (1.7.0+dfsg-2deepin1) unstable; urgency=medium
+
+  * Rebuild with LTO enabled (dpkg vendor feature optimize/lto).
+
+ -- tunaichao <tunaichao@uniontech.com>  Mon, 21 Sep 2026 16:15:45 +0800
+
 svt-av1 (1.7.0+dfsg-2) unstable; urgency=medium
 
   * Upload to unstable
